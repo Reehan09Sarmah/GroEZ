@@ -1,7 +1,11 @@
 import json
 import getpass
+import requests  # <-- Make sure this library is installed
 from src.decomposer import QueryDecomposer
-from src.db_executor import execute_db1_query  # Import the new function
+from src.db_executor import (
+    execute_db1_query,
+    execute_db2_query_via_api,
+)  # Import both functions
 
 # --- Configuration ---
 DB1_CONFIG = {
@@ -12,79 +16,100 @@ DB1_CONFIG = {
     "database": "groez_db1",
 }
 
+# The URL for your partner's running Flask API server.
+# Make sure this is updated with your partner's actual local network IP address.
+DB2_API_URL = (
+    "http://192.168.52.99:5000/query"  # <--- IMPORTANT: REPLACE WITH PARTNER'S IP
+)
 
-def demonstrate_decomposer_and_executor():
-    """
-    Demonstrates the full flow:
-    1. Decomposes a user query.
-    2. Executes the generated SQL query for DB1.
-    3. Prints both the plan and the fetched data.
-    """
-    print("--- Smart Agriculture System: Decompose & Execute Test ---")
 
-    # 1. Securely get the API key
-    try:
-        api_key = getpass.getpass("Please enter your Google AI Studio API key: ")
-        if not api_key:
-            print("API key cannot be empty.")
-            return
-    except Exception as e:
-        print(f"Could not read API key: {e}")
+def demonstrate_full_federation():
+    """
+    Demonstrates the complete flow with multiple test cases:
+    1. Decomposes each user query.
+    2. Executes queries on DB1 (direct connection) and DB2 (via API).
+    3. Prints all results for each case.
+    """
+    print("--- Smart Agriculture System: Full Federation Test ---")
+
+    # 1. Get Gemini API Key
+    api_key = getpass.getpass("Please enter your Google AI Studio API key: ")
+    if not api_key:
+        print("API key cannot be empty.")
         return
 
-    # 2. Initialize the decomposer
+    # 2. Initialize Decomposer
     try:
         decomposer = QueryDecomposer(api_key=api_key)
     except Exception as e:
-        print(f"Failed to initialize the decomposer. Check your API key. Error: {e}")
+        print(f"Failed to initialize the decomposer: {e}")
         return
 
-    # 3. Define test queries
+    # 3. Define a list of diverse test queries
     queries_to_test = [
-        # This query should only use DB1
-        "What is the average soil pH in Maharashtra?",
-        # This query uses both, but we'll only execute the DB1 part for now
-        "In Punjab, what is the best crop for sandy loam soil?",
+        # Test Case 1: Primarily DB2 (Production Info)
+        "What was the total production of Sugarcane in Maharashtra in 2023?",
+        # Test Case 4: Simple Aggregate on DB2
+        "List the top 3 crops with the highest average yield across all years in Punjab.",
     ]
 
-    # 4. Run the tests
     for i, query in enumerate(queries_to_test):
-        print("\n" + "=" * 50)
-        print(f"Test Case #{i + 1}")
+        print("\n" + "#" * 70)
+        print(f"Executing Test Case #{i + 1}")
+        print(f"Query: '{query}'")
+        print("#" * 70)
 
         decomposed_plan = decomposer.decompose(query)
 
         print("\n--- Decomposed Plan (JSON Output) ---")
         if "error" in decomposed_plan:
-            print(f"An error occurred during decomposition: {decomposed_plan['error']}")
-            continue
+            print(f"Decomposition error: {decomposed_plan['error']}")
+            continue  # Skip to the next query
 
         print(json.dumps(decomposed_plan, indent=2))
 
-        # --- NEW: EXECUTION STEP FOR DB1 ---
+        # --- EXECUTION STEP FOR DB1 ---
         db1_sql = decomposed_plan.get("db1_sql")
-
         if db1_sql and db1_sql != "N/A":
-            print("\n--- Executing Query on DB1 ---")
-            print(f"SQL: {db1_sql}")
-
+            print("\n--- Executing Query on DB1 (Local) ---")
             results, columns = execute_db1_query(DB1_CONFIG, db1_sql)
-
             if results is not None:
                 print("\n--- DB1 Results ---")
-                if results:
-                    print(f"Columns: {columns}")
-                    for row in results:
-                        print(f"Data: {row}")
-                else:
-                    print("Query executed successfully, but returned no results.")
+                print(f"Columns: {columns}")
+                for row in results:
+                    print(f"Data: {row}")
             else:
-                print("Failed to retrieve results from DB1.")
+                print("Failed to get results from DB1.")
         else:
-            print("\n--- No query to execute on DB1 for this test case. ---")
+            print("\n--- No query for DB1. ---")
 
-        print("=" * 50)
+        # --- EXECUTION STEP FOR DB2 ---
+        db2_sql = decomposed_plan.get("db2_sql")
+        if db2_sql and db2_sql != "N/A":
+            print("\n--- Executing Query on DB2 (via API) ---")
+            results, columns = execute_db2_query_via_api(DB2_API_URL, db2_sql)
+            if results is not None:
+                print("\n--- DB2 Results ---")
+                print(f"Columns: {columns}")
+                for row in results:
+                    print(f"Data: {row}")
+            else:
+                print(
+                    "Failed to get results from DB2. Ensure the API server is running."
+                )
+        else:
+            print("\n--- No query for DB2. ---")
+
+        # We will add the LLM execution step in a later phase
+        llm_prompt = decomposed_plan.get("llm_prompt")
+        if llm_prompt and llm_prompt != "N/A":
+            print("\n--- LLM Prompt Generated (Execution in Phase 4) ---")
+            print(f"Prompt: {llm_prompt}")
+
+    print("\n" + "#" * 70)
+    print("All test cases complete.")
+    print("#" * 70)
 
 
 if __name__ == "__main__":
-    demonstrate_decomposer_and_executor()
+    demonstrate_full_federation()

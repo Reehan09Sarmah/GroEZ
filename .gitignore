@@ -1,1 +1,11 @@
+# Python virtual environment
 venv/
+__pycache__/
+
+# Role-specific server files
+# This is the crucial line: it tells Git to ignore your partner's API script.
+src/api.py
+
+# Ignore raw data files. The database is the source of truth, not the CSVs.
+data/output_datasets/
+
