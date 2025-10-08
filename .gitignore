@@ -9,3 +9,5 @@ src/api.py
 # Ignore raw data files. The database is the source of truth, not the CSVs.
 data/output_datasets/
 
+# Ignore secrets
+.streamlit/

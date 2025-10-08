@@ -1,11 +1,11 @@
 import json
 import getpass
-import requests  # <-- Make sure this library is installed
+import requests
 from src.decomposer import QueryDecomposer
 from src.db_executor import (
     execute_db1_query,
     execute_db2_query_via_api,
-)  # Import both functions
+)
 
 # --- Configuration ---
 DB1_CONFIG = {
@@ -16,23 +16,16 @@ DB1_CONFIG = {
     "database": "groez_db1",
 }
 
-# The URL for your partner's running Flask API server.
-# Make sure this is updated with your partner's actual local network IP address.
-DB2_API_URL = (
-    "http://192.168.52.99:5000/query"  # <--- IMPORTANT: REPLACE WITH PARTNER'S IP
-)
+DB2_API_URL = "http://192.168.52.99:5000/query"
 
 
+# Demonstrates the complete flow with multiple test cases:
+# Decomposes each user query.
+# Executes queries on DB1 (direct connection) and DB2 (via API).
+# Prints all results for each case.
 def demonstrate_full_federation():
-    """
-    Demonstrates the complete flow with multiple test cases:
-    1. Decomposes each user query.
-    2. Executes queries on DB1 (direct connection) and DB2 (via API).
-    3. Prints all results for each case.
-    """
     print("--- Smart Agriculture System: Full Federation Test ---")
 
-    # 1. Get Gemini API Key
     api_key = getpass.getpass("Please enter your Google AI Studio API key: ")
     if not api_key:
         print("API key cannot be empty.")
@@ -45,12 +38,9 @@ def demonstrate_full_federation():
         print(f"Failed to initialize the decomposer: {e}")
         return
 
-    # 3. Define a list of diverse test queries
     queries_to_test = [
-        # Test Case 1: Primarily DB2 (Production Info)
         "What was the total production of Sugarcane in Maharashtra in 2023?",
-        # Test Case 4: Simple Aggregate on DB2
-        "List the top 3 crops with the highest average yield across all years in Punjab.",
+        "In Punjab, for districts with alluvial soil, what was the total production of Rice in 2022, and what are the best fertilization practices for Rice in that type of soil?",
     ]
 
     for i, query in enumerate(queries_to_test):
@@ -64,11 +54,11 @@ def demonstrate_full_federation():
         print("\n--- Decomposed Plan (JSON Output) ---")
         if "error" in decomposed_plan:
             print(f"Decomposition error: {decomposed_plan['error']}")
-            continue  # Skip to the next query
+            continue
 
         print(json.dumps(decomposed_plan, indent=2))
 
-        # --- EXECUTION STEP FOR DB1 ---
+        print("Now let us execute the queries on DB1 and DB2")
         db1_sql = decomposed_plan.get("db1_sql")
         if db1_sql and db1_sql != "N/A":
             print("\n--- Executing Query on DB1 (Local) ---")
@@ -83,7 +73,6 @@ def demonstrate_full_federation():
         else:
             print("\n--- No query for DB1. ---")
 
-        # --- EXECUTION STEP FOR DB2 ---
         db2_sql = decomposed_plan.get("db2_sql")
         if db2_sql and db2_sql != "N/A":
             print("\n--- Executing Query on DB2 (via API) ---")
@@ -100,7 +89,6 @@ def demonstrate_full_federation():
         else:
             print("\n--- No query for DB2. ---")
 
-        # We will add the LLM execution step in a later phase
         llm_prompt = decomposed_plan.get("llm_prompt")
         if llm_prompt and llm_prompt != "N/A":
             print("\n--- LLM Prompt Generated (Execution in Phase 4) ---")

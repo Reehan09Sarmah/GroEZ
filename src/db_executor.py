@@ -3,11 +3,8 @@ import requests  # We need this library to make web requests
 import json
 
 
+# Connects to the DB1 MySQL database, executes a given query, and returns the results.
 def execute_db1_query(config: dict, query: str):
-    """
-    Connects to the DB1 MySQL database, executes a given query,
-    and returns the results.
-    """
     try:
         connection = mysql.connector.connect(
             host=config.get("host", "localhost"),
@@ -36,18 +33,8 @@ def execute_db1_query(config: dict, query: str):
     return None, None
 
 
+# Sends a SQL query to the DB2 Flask API and returns the results.
 def execute_db2_query_via_api(api_url: str, query: str):
-    """
-    Sends a SQL query to the DB2 Flask API and returns the results.
-
-    Args:
-        api_url (str): The URL of the Flask API endpoint (e.g., http://127.0.0.1:5000/query).
-        query (str): The SQL query string to execute.
-
-    Returns:
-        list: A list of tuples/lists representing the rows fetched, or None on error.
-        list: The column headers, or None on error.
-    """
     try:
         payload = {"sql_query": query}
         # The timeout is set to 10 seconds to avoid waiting forever
