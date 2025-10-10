@@ -1,4 +1,6 @@
 import json
+import os
+from dotenv import load_dotenv
 import getpass
 import requests
 from src.decomposer import QueryDecomposer
@@ -19,16 +21,20 @@ DB1_CONFIG = {
 DB2_API_URL = "http://192.168.52.99:5000/query"
 
 
-# Demonstrates the complete flow with multiple test cases:
-# Decomposes each user query.
-# Executes queries on DB1 (direct connection) and DB2 (via API).
-# Prints all results for each case.
-def demonstrate_full_federation():
-    print("--- Smart Agriculture System: Full Federation Test ---")
+script_dir = os.path.dirname(__file__)
+env_path = os.path.join(script_dir, ".env")
+load_dotenv(dotenv_path=env_path)
 
-    api_key = getpass.getpass("Please enter your Google AI Studio API key: ")
+
+def demonstrate_full_federation():
+    print("--- GroEZ: Full Federation Test ---")
+
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        print("API key cannot be empty.")
+        print("Error: GEMINI_API_KEY not found.")
+        print(
+            "Please ensure you have a .env file in the project root with your API key."
+        )
         return
 
     # 2. Initialize Decomposer
@@ -58,41 +64,41 @@ def demonstrate_full_federation():
 
         print(json.dumps(decomposed_plan, indent=2))
 
-        print("Now let us execute the queries on DB1 and DB2")
-        db1_sql = decomposed_plan.get("db1_sql")
-        if db1_sql and db1_sql != "N/A":
-            print("\n--- Executing Query on DB1 (Local) ---")
-            results, columns = execute_db1_query(DB1_CONFIG, db1_sql)
-            if results is not None:
-                print("\n--- DB1 Results ---")
-                print(f"Columns: {columns}")
-                for row in results:
-                    print(f"Data: {row}")
-            else:
-                print("Failed to get results from DB1.")
-        else:
-            print("\n--- No query for DB1. ---")
+        # print("Now let us execute the queries on DB1 and DB2")
+        # db1_sql = decomposed_plan.get("db1_sql")
+        # if db1_sql and db1_sql != "N/A":
+        #     print("\n--- Executing Query on DB1 (Local) ---")
+        #     results, columns = execute_db1_query(DB1_CONFIG, db1_sql)
+        #     if results is not None:
+        #         print("\n--- DB1 Results ---")
+        #         print(f"Columns: {columns}")
+        #         for row in results:
+        #             print(f"Data: {row}")
+        #     else:
+        #         print("Failed to get results from DB1.")
+        # else:
+        #     print("\n--- No query for DB1. ---")
 
-        db2_sql = decomposed_plan.get("db2_sql")
-        if db2_sql and db2_sql != "N/A":
-            print("\n--- Executing Query on DB2 (via API) ---")
-            results, columns = execute_db2_query_via_api(DB2_API_URL, db2_sql)
-            if results is not None:
-                print("\n--- DB2 Results ---")
-                print(f"Columns: {columns}")
-                for row in results:
-                    print(f"Data: {row}")
-            else:
-                print(
-                    "Failed to get results from DB2. Ensure the API server is running."
-                )
-        else:
-            print("\n--- No query for DB2. ---")
+        # db2_sql = decomposed_plan.get("db2_sql")
+        # if db2_sql and db2_sql != "N/A":
+        #     print("\n--- Executing Query on DB2 (via API) ---")
+        #     results, columns = execute_db2_query_via_api(DB2_API_URL, db2_sql)
+        #     if results is not None:
+        #         print("\n--- DB2 Results ---")
+        #         print(f"Columns: {columns}")
+        #         for row in results:
+        #             print(f"Data: {row}")
+        #     else:
+        #         print(
+        #             "Failed to get results from DB2. Ensure the API server is running."
+        #         )
+        # else:
+        #     print("\n--- No query for DB2. ---")
 
-        llm_prompt = decomposed_plan.get("llm_prompt")
-        if llm_prompt and llm_prompt != "N/A":
-            print("\n--- LLM Prompt Generated (Execution in Phase 4) ---")
-            print(f"Prompt: {llm_prompt}")
+        # llm_prompt = decomposed_plan.get("llm_prompt")
+        # if llm_prompt and llm_prompt != "N/A":
+        #     print("\n--- LLM Prompt Generated (Execution in Phase 4) ---")
+        #     print(f"Prompt: {llm_prompt}")
 
     print("\n" + "#" * 70)
     print("All test cases complete.")

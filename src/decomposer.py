@@ -17,6 +17,8 @@ class QueryDecomposer:
         """
         try:
             genai.configure(api_key=api_key)
+            # Using the model confirmed to be available to you to prevent errors
+            self.model_name = "gemini-2.5-flash"
             print("Google Gemini client configured successfully.")
         except Exception as e:
             print(f"Error configuring Gemini client: {e}")
@@ -26,9 +28,8 @@ class QueryDecomposer:
         self.db2_schema = self._get_db2_schema()
         self.system_prompt = self._build_system_prompt()
         self.generation_config = {"response_mime_type": "application/json"}
-
         self.model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
+            model_name=self.model_name,
             generation_config=self.generation_config,
             system_instruction=self.system_prompt,
         )
@@ -87,31 +88,28 @@ class QueryDecomposer:
         """
 
     def _build_system_prompt(self):
-        """Constructs the detailed system prompt for the LLM."""
-        return f"""
-        You are an expert query decomposition system for a smart agriculture application, operating on Tuesday, October 7, 2025, from New Delhi, India.
-        Your task is to analyze a user's natural language query and break it down into sub-queries for two separate MySQL databases and a prompt for a general knowledge LLM.
+        """Constructs the original, simpler system prompt for the LLM."""
+        return f"""You are an expert query decomposition system for a smart agriculture application, operating from New Delhi, India. Your task is to analyze a user's natural language query and create a JSON execution plan with sub-queries for two separate MySQL databases and a prompt for a general knowledge LLM.
 
-        You have access to the following data sources:
+--- Data Sources ---
+1.  **DB1 (groez_db1 - Weather & Soil)**: Contains information about regions, soil conditions, and weather.
+    Schema:
+    {self.db1_schema}
 
-        1.  **DB1 (groez_db1 - Weather & Soil)**: Contains information about regions, soil conditions, and weather.
-            Schema:
-            {self.db1_schema}
+2.  **DB2 (groez_db2 - Crops & Yields)**: Contains information about crops and their historical yields.
+    Schema:
+    {self.db2_schema}
 
-        2.  **DB2 (groez_db2 - Crops & Yields)**: Contains information about crops and their historical yields.
-            Schema:
-            {self.db2_schema}
+3.  **General LLM**: Used for questions requiring agricultural advice, recommendations, or explanations.
 
-        3.  **General LLM**: Used for questions requiring agricultural advice, recommendations, or explanations (e.g., "how to", "why", "recommend", "tips", "explain").
-
-        **Instructions:**
-        1.  Analyze the user's query to understand their intent and identify key entities (crops, locations, years, soil types etc.).
-        2.  Generate the appropriate MySQL SQL query/queries for the correct database based on the entities found. Use lowercase table names.
-        3.  If the query asks for advice or explanation, formulate a clear, self-contained prompt for the General LLM.
-        4.  Your output MUST be a single, valid JSON object that adheres to the schema provided. Do not add any text or explanations.
-        5.  The JSON object must have these exact keys: "analysis", "db1_sql", "db2_sql", "llm_prompt".
-        6.  For any key that is not needed for a given query, use the string "N/A" as its value.
-        """
+--- Instructions ---
+1.  Analyze the user's query to understand their intent.
+2.  Generate the appropriate MySQL SQL queries for the correct databases.
+3.  If advice is needed, formulate a clear prompt for the General LLM.
+4.  Your output MUST be a single, valid JSON object.
+5.  The JSON object must have these exact keys: "db1_sql", "db2_sql", "llm_prompt".
+6.  For any key not needed for a given query, use the string "N/A" as its value.
+"""
 
     def decompose(self, user_query: str):
         """

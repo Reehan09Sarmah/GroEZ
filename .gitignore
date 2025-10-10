@@ -11,3 +11,4 @@ data/output_datasets/
 
 # Ignore secrets
 .streamlit/
+.env
