@@ -1,52 +1,70 @@
 import json
 import os
-from dotenv import load_dotenv
-import getpass
-import requests
+import mysql.connector
+from mysql.connector import Error
 from src.decomposer import QueryDecomposer
-from src.db_executor import (
-    execute_db1_query,
-    execute_db2_query_via_api,
-)
 
-# --- Configuration ---
-DB1_CONFIG = {
-    "user": "groez_user",
-    "password": "groez09",
-    "host": "localhost",
-    "port": 3306,
-    "database": "groez_db1",
-}
-
-DB2_API_URL = "http://192.168.52.99:5000/query"
+# Import configs from your new centralized config file
+from config import DB1_CONFIG, DB2_CONFIG, GEMINI_API_KEY
 
 
-script_dir = os.path.dirname(__file__)
-env_path = os.path.join(script_dir, ".env")
-load_dotenv(dotenv_path=env_path)
+# --- Helper Function for Direct DB Access ---
+def execute_federated_query(db_config, query, db_name_label):
+    """
+    Executes a SQL query directly against a MySQL database using the provided config.
+    Returns results and column names.
+    """
+    if not query or query == "N/A":
+        # print(f"\n--- No query for {db_name_label} ---") # Cleaner output
+        return None, None
+
+    # print(f"\n--- Executing Query on {db_name_label} ({db_config['host']}) ---") # Cleaner output
+    connection = None
+    try:
+        connection = mysql.connector.connect(**db_config)
+        if connection.is_connected():
+            cursor = connection.cursor()
+            cursor.execute(query)
+
+            # Fetch column names and data
+            columns = (
+                [col[0] for col in cursor.description] if cursor.description else []
+            )
+            results = cursor.fetchall()
+
+            cursor.close()
+            return results, columns
+
+    except Error as e:
+        print(f"❌ MySQL Error on {db_name_label}: {e}")
+        return None, None
+    finally:
+        if connection and connection.is_connected():
+            connection.close()
 
 
+# --- Main Demonstration Function ---
 def demonstrate_full_federation():
-    print("--- GroEZ: Full Federation Test ---")
+    print("--- GroEZ: Full Federation Test (Direct DB Connections) ---")
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("Error: GEMINI_API_KEY not found.")
-        print(
-            "Please ensure you have a .env file in the project root with your API key."
-        )
+    if not GEMINI_API_KEY:
+        print("Error: GEMINI_API_KEY not found in .env file.")
         return
 
-    # 2. Initialize Decomposer
+    # 1. Initialize Decomposer
     try:
-        decomposer = QueryDecomposer(api_key=api_key)
+        # Assuming your src.decomposer handles the API key internally or you pass it here
+        decomposer = QueryDecomposer(api_key=GEMINI_API_KEY)
+        # print("✅ Decomposer initialized successfully.") # Cleaner output
     except Exception as e:
-        print(f"Failed to initialize the decomposer: {e}")
+        print(f"❌ Failed to initialize the decomposer: {e}")
         return
 
     queries_to_test = [
-        "What was the total production of Sugarcane in Maharashtra in 2023?",
-        "In Punjab, for districts with alluvial soil, what was the total production of Rice in 2022, and what are the best fertilization practices for Rice in that type of soil?",
+        "Compare the average Wheat yield in 2022 for districts with 'Alluvial' soil versus districts with 'Red' soil. Which soil type performed better and why might that be?",
+        "List the districts in Maharashtra where the average rainfall in 2023 was below 500mm. For these districts, what was the total production of Sugarcane, and suggest drought-resistant farming techniques.",
+        "Find districts with low soil nitrogen (< 150 ppm). What were the top 3 highest yielding crops in those districts in 2022, and what fertilizers would you recommend to improve nitrogen levels there?",
+        "In Punjab, for districts with alluvial soil, what was the Rice production in 2022?",
     ]
 
     for i, query in enumerate(queries_to_test):
@@ -55,7 +73,12 @@ def demonstrate_full_federation():
         print(f"Query: '{query}'")
         print("#" * 70)
 
-        decomposed_plan = decomposer.decompose(query)
+        # 2. Decompose
+        try:
+            decomposed_plan = decomposer.decompose(query)
+        except Exception as e:
+            print(f"❌ Decomposition failed: {e}")
+            continue
 
         print("\n--- Decomposed Plan (JSON Output) ---")
         if "error" in decomposed_plan:
@@ -64,41 +87,28 @@ def demonstrate_full_federation():
 
         print(json.dumps(decomposed_plan, indent=2))
 
-        # print("Now let us execute the queries on DB1 and DB2")
-        # db1_sql = decomposed_plan.get("db1_sql")
-        # if db1_sql and db1_sql != "N/A":
-        #     print("\n--- Executing Query on DB1 (Local) ---")
-        #     results, columns = execute_db1_query(DB1_CONFIG, db1_sql)
-        #     if results is not None:
-        #         print("\n--- DB1 Results ---")
-        #         print(f"Columns: {columns}")
-        #         for row in results:
-        #             print(f"Data: {row}")
-        #     else:
-        #         print("Failed to get results from DB1.")
-        # else:
-        #     print("\n--- No query for DB1. ---")
+        print("\n⬇️ STARTING FEDERATED EXECUTION ⬇️")
 
-        # db2_sql = decomposed_plan.get("db2_sql")
-        # if db2_sql and db2_sql != "N/A":
-        #     print("\n--- Executing Query on DB2 (via API) ---")
-        #     results, columns = execute_db2_query_via_api(DB2_API_URL, db2_sql)
-        #     if results is not None:
-        #         print("\n--- DB2 Results ---")
-        #         print(f"Columns: {columns}")
-        #         for row in results:
-        #             print(f"Data: {row}")
-        #     else:
-        #         print(
-        #             "Failed to get results from DB2. Ensure the API server is running."
-        #         )
-        # else:
-        #     print("\n--- No query for DB2. ---")
+        results1, cols1 = execute_federated_query(
+            DB1_CONFIG, decomposed_plan.get("db1_sql"), "DB1 (Local)"
+        )
+        if results1:
+            print(f"✅ DB1 Results (Columns: {cols1}):")
+            for row in results1:
+                print(f"   {row}")
 
-        # llm_prompt = decomposed_plan.get("llm_prompt")
-        # if llm_prompt and llm_prompt != "N/A":
-        #     print("\n--- LLM Prompt Generated (Execution in Phase 4) ---")
-        #     print(f"Prompt: {llm_prompt}")
+        results2, cols2 = execute_federated_query(
+            DB2_CONFIG, decomposed_plan.get("db2_sql"), "DB2 (Remote)"
+        )
+        if results2:
+            print(f"✅ DB2 Results (Columns: {cols2}):")
+            for row in results2:
+                print(f"   {row}")
+
+        llm_prompt = decomposed_plan.get("llm_prompt")
+        if llm_prompt and llm_prompt != "N/A":
+            print("\n--- LLM Prompt Generated (Ready for Synthesis Phase) ---")
+            print(f"Prompt: {llm_prompt}")
 
     print("\n" + "#" * 70)
     print("All test cases complete.")
