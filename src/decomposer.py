@@ -1,6 +1,7 @@
 import json
 import google.generativeai as genai
-import mysql
+import mysql.connector
+from mysql.connector import Error
 
 
 class QueryDecomposer:
@@ -18,6 +19,7 @@ class QueryDecomposer:
             self.db1_schema = self._get_db1_schema(db1_config)
             self.db2_schema = self._get_db2_schema(db2_config)
             print("✅ QueryDecomposer: Schemas fetched successfully.")
+            print({f"DB1 Schema: {self.db1_schema} | DB2 Schema: {self.db2_schema}"})
         except Exception as e:
             print(f"CRITICAL ERROR: Could not fetch schemas from database: {e}")
             print("Falling back to hardcoded schemas. System may be unstable.")
@@ -44,6 +46,7 @@ class QueryDecomposer:
             conn = mysql.connector.connect(**db_config)
             cursor = conn.cursor(dictionary=True)
 
+            # Fetch tables
             cursor.execute(
                 "SELECT table_name FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = %s",
                 (db_name,),
@@ -54,26 +57,28 @@ class QueryDecomposer:
                 raise Exception(f"No tables found in database {db_name}")
 
             for table in tables:
-                table_name = table["table_name"]
-                schema_string += f"CREATE TABLE {table_name} (\n"
+                table_name = table["TABLE_NAME"]
+                schema_string += f"CREATE TABLE `{table_name}` (\n"
 
                 cursor.execute(
                     """
-                    SELECT column_name, column_type, is_nullable, column_key 
-                    FROM INFORMATION_SCHEMA.COLUMNS 
+                    SELECT column_name, column_type, is_nullable, column_key, extra
+                    FROM INFORMATION_SCHEMA.COLUMNS
                     WHERE table_schema = %s AND table_name = %s
                     ORDER BY ordinal_position
-                """,
+                    """,
                     (db_name, table_name),
                 )
                 columns = cursor.fetchall()
 
                 col_definitions = []
                 for col in columns:
-                    col_def = f"    {col['column_name']} {col['column_type']}"
-                    if col["is_nullable"] == "NO":
+                    col_def = f"    `{col['COLUMN_NAME']}` {col['COLUMN_TYPE']}"
+                    if col["IS_NULLABLE"] == "NO":
                         col_def += " NOT NULL"
-                    if col["column_key"] == "PRI":
+                    if col["EXTRA"]:
+                        col_def += f" {col['EXTRA']}"
+                    if col["COLUMN_KEY"] == "PRI":
                         col_def += " PRIMARY KEY"
                     col_definitions.append(col_def)
 
@@ -81,25 +86,27 @@ class QueryDecomposer:
                     """
                     SELECT column_name, referenced_table_name, referenced_column_name 
                     FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
-                    WHERE table_schema = %s AND table_name = %s AND referenced_table_name IS NOT NULL
-                """,
+                    WHERE table_schema = %s AND table_name = %s 
+                    AND referenced_table_name IS NOT NULL
+                    """,
                     (db_name, table_name),
                 )
                 fks = cursor.fetchall()
 
                 for fk in fks:
                     col_definitions.append(
-                        f"    FOREIGN KEY ({fk['column_name']}) REFERENCES {fk['referenced_table_name']}({fk['referenced_column_name']})"
+                        f"    FOREIGN KEY (`{fk['COLUMN_NAME']}`) "
+                        f"REFERENCES `{fk['REFERENCED_TABLE_NAME']}`(`{fk['REFERENCED_COLUMN_NAME']}`)"
                     )
 
                 schema_string += ",\n".join(col_definitions)
-                schema_string += "\n);\n"
+                schema_string += "\n);\n\n"
 
             cursor.close()
             conn.close()
             return schema_string
 
-        except Exception as e:
+        except Error as e:
             print(f"Error connecting to DB {db_name} to fetch schema: {e}")
             raise e
 

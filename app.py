@@ -31,7 +31,6 @@ engine, decomposer = init_engine()
 
 
 if engine and decomposer:
-    # --- Sidebar ---
     st.sidebar.title("About GroEZ 🌾")
     st.sidebar.info(
         """
@@ -42,13 +41,12 @@ if engine and decomposer:
         """
     )
 
-    # --- Main Page ---
     st.title("GroEZ: Smart Agriculture Query System")
 
     if "user_query" not in st.session_state:
         st.session_state.user_query = ""
 
-    query_text = "Compare the average Wheat yield in 2022 for districts with 'Alluvial' soil versus 'Red' soil."
+    query_text = "Compare the average Rice yield in 2022 for districts with 'Alluvial' soil versus 'Red' soil."
     user_query = st.text_area(
         "Enter your questions:",
         value=st.session_state.user_query,
@@ -56,7 +54,7 @@ if engine and decomposer:
         placeholder=query_text,
     )
 
-    if st.button("Submit Query"):
+    if st.button("Fetch"):
         if user_query:
             st.session_state.user_query = user_query
 

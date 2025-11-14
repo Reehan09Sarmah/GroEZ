@@ -1,5 +1,4 @@
 import json
-import os
 import mysql.connector
 from mysql.connector import Error
 from src.decomposer import QueryDecomposer
@@ -8,17 +7,14 @@ from src.decomposer import QueryDecomposer
 from config import DB1_CONFIG, DB2_CONFIG, GEMINI_API_KEY
 
 
-# --- Helper Function for Direct DB Access ---
 def execute_federated_query(db_config, query, db_name_label):
     """
     Executes a SQL query directly against a MySQL database using the provided config.
     Returns results and column names.
     """
     if not query or query == "N/A":
-        # print(f"\n--- No query for {db_name_label} ---") # Cleaner output
         return None, None
 
-    # print(f"\n--- Executing Query on {db_name_label} ({db_config['host']}) ---") # Cleaner output
     connection = None
     try:
         connection = mysql.connector.connect(**db_config)
@@ -26,7 +22,6 @@ def execute_federated_query(db_config, query, db_name_label):
             cursor = connection.cursor()
             cursor.execute(query)
 
-            # Fetch column names and data
             columns = (
                 [col[0] for col in cursor.description] if cursor.description else []
             )
@@ -43,7 +38,6 @@ def execute_federated_query(db_config, query, db_name_label):
             connection.close()
 
 
-# --- Main Demonstration Function ---
 def demonstrate_full_federation():
     print("--- GroEZ: Full Federation Test (Direct DB Connections) ---")
 
@@ -51,20 +45,19 @@ def demonstrate_full_federation():
         print("Error: GEMINI_API_KEY not found in .env file.")
         return
 
-    # 1. Initialize Decomposer
     try:
-        # Assuming your src.decomposer handles the API key internally or you pass it here
-        decomposer = QueryDecomposer(api_key=GEMINI_API_KEY)
-        # print("✅ Decomposer initialized successfully.") # Cleaner output
+        decomposer = QueryDecomposer(
+            api_key=GEMINI_API_KEY, db1_config=DB1_CONFIG, db2_config=DB2_CONFIG
+        )
     except Exception as e:
         print(f"❌ Failed to initialize the decomposer: {e}")
         return
 
     queries_to_test = [
         "Compare the average Wheat yield in 2022 for districts with 'Alluvial' soil versus districts with 'Red' soil. Which soil type performed better and why might that be?",
-        "List the districts in Maharashtra where the average rainfall in 2023 was below 500mm. For these districts, what was the total production of Sugarcane, and suggest drought-resistant farming techniques.",
-        "Find districts with low soil nitrogen (< 150 ppm). What were the top 3 highest yielding crops in those districts in 2022, and what fertilizers would you recommend to improve nitrogen levels there?",
-        "In Punjab, for districts with alluvial soil, what was the Rice production in 2022?",
+        # "List the districts in Maharashtra where the average rainfall in 2023 was below 500mm. For these districts, what was the total production of Sugarcane, and suggest drought-resistant farming techniques.",
+        # "Find districts with low soil nitrogen (< 150 ppm). What were the top 3 highest yielding crops in those districts in 2022, and what fertilizers would you recommend to improve nitrogen levels there?",
+        # "In Punjab, for districts with alluvial soil, what was the Rice production in 2022?",
     ]
 
     for i, query in enumerate(queries_to_test):
@@ -73,7 +66,6 @@ def demonstrate_full_federation():
         print(f"Query: '{query}'")
         print("#" * 70)
 
-        # 2. Decompose
         try:
             decomposed_plan = decomposer.decompose(query)
         except Exception as e:
@@ -87,7 +79,7 @@ def demonstrate_full_federation():
 
         print(json.dumps(decomposed_plan, indent=2))
 
-        print("\n⬇️ STARTING FEDERATED EXECUTION ⬇️")
+        print("\n🏎️💨 STARTING FEDERATED EXECUTION ⬇️")
 
         results1, cols1 = execute_federated_query(
             DB1_CONFIG, decomposed_plan.get("db1_sql"), "DB1 (Local)"

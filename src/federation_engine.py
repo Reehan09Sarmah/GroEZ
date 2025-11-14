@@ -27,7 +27,7 @@ class FederationEngine:
 
         host = config.get("host", "unknown-ip")
         db = config.get("database", "unknown-db")
-        print(f"\n🚀 FEDERATING: Sending SQL to {db_label} ({db}) on {host}...")
+        print(f"\n🏎️💨FEDERATING: Sending SQL to {db_label} ({db}) on {host}...")
         print(f"   SQL: {query}")
 
         try:
@@ -174,7 +174,7 @@ IntegrATE all of this information into a single, fluid, and easy-to-understand r
                         suffixes=("_db1", "_db2"),
                     )
                     print(
-                        f"✅ Manual Pandas Composite Join successful. Result size: {len(joined_structured_df)} rows."
+                        f"✅Tables JOINED Successfully. Result size: {len(joined_structured_df)} rows."
                     )
 
                 else:
@@ -182,14 +182,12 @@ IntegrATE all of this information into a single, fluid, and easy-to-understand r
                         "Manual Join Failed: Composite key ('district' and 'year') not found in one or both query results. Check LLM compliance."
                     )
 
-            # Only DB1 returned data
             elif db1_results_df is not None and not db1_results_df.empty:
-                joined_structured_df = db1_results_df  # Pass it along
+                joined_structured_df = db1_results_df
                 print("Only DB1 returned data. Using as structured result.")
 
-            # Only DB2 returned data
             elif db2_results_df is not None and not db2_results_df.empty:
-                joined_structured_df = db2_results_df  # Pass it along
+                joined_structured_df = db2_results_df
                 print("Only DB2 returned data. Using as structured result.")
 
         except Exception as e:
