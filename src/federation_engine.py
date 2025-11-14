@@ -120,7 +120,7 @@ You have also retrieved the following General Advice (from a separate LLM query)
 
 ---
 Task:
-IntegrATE all of this information into a single, fluid, and easy-to-understand response.
+Integrate all of this information into a single, fluid, and easy-to-understand response.
 - Look at the user's query and use the data from the **SEPARATE** sources to answer it.
 - You may need to manually compare or correlate the data in your reasoning.
 - Weave in the general advice where it's relevant.
@@ -179,7 +179,7 @@ IntegrATE all of this information into a single, fluid, and easy-to-understand r
 
                 else:
                     errors.append(
-                        "Manual Join Failed: Composite key ('district' and 'year') not found in one or both query results. Check LLM compliance."
+                        "Join Failed: Composite key ('district' and 'year') not found in one or both query results."
                     )
 
             elif db1_results_df is not None and not db1_results_df.empty:
@@ -191,7 +191,7 @@ IntegrATE all of this information into a single, fluid, and easy-to-understand r
                 print("Only DB2 returned data. Using as structured result.")
 
         except Exception as e:
-            errors.append(f"Manual Join Failed: {e}")
+            errors.append(f"Join Failed: {e}")
 
         llm_data, llm_err = self._get_llm_data(llm_prompt)
         if llm_err:
