@@ -6,7 +6,6 @@ import pandas as pd
 
 class FederationEngine:
     def __init__(self, db1_config, db2_config, gemini_api_key):
-        """Initializes the engine with DB configs, API key, and cache."""
         self.db1_config = db1_config
         self.db2_config = db2_config
         self.report_cache = {}
@@ -22,11 +21,11 @@ class FederationEngine:
             raise
 
     def _execute_query(self, config, query, db_label, attempt=1):
-        """Executes SQL with automatic retry (Self-Correction)."""
         if not query or query == "N/A":
             return None, None
 
         host = config.get("host", "unknown")
+        print(f"Query to be federated: {query}")
         print(f"\n🏎️💨 FEDERATING: SQL to {db_label} ({host})... Attempt {attempt}")
 
         try:
@@ -38,6 +37,36 @@ class FederationEngine:
         except Error as e:
             print(f"❌ Error: {e}")
             return None, str(e)
+
+    def _execute_with_retry(self, config, query, db_label, user_query, decomposer):
+        """
+        Wrapper around _execute_query that implements the Reflexion (Self-Correction) loop.
+        If an error occurs, it asks the decomposer to fix the SQL and retries once.
+        """
+
+        df, error = self._execute_query(config, query, db_label, attempt=1)
+
+        if error and decomposer:
+            print(f"⚠️ Encountered Error in {db_label}: {error}")
+            print("🔄 Initiating Self-Correction Loop (Reflexion)...")
+
+            fixed_sql = decomposer.fix_query(user_query, query, error, db_label)
+
+            if fixed_sql:
+                print(f"🚀 Retrying {db_label} with Fixed SQL: {fixed_sql}")
+                df_retry, error_retry = self._execute_query(
+                    config, fixed_sql, db_label, attempt=2
+                )
+
+                if not error_retry:
+                    print(f"✅ Self-Correction Successful for {db_label}!")
+                    return df_retry, None
+                else:
+                    return None, f"Retry failed: {error_retry}"
+            else:
+                return None, "Self-correction failed to generate new SQL."
+
+        return df, error
 
     def simulate_scenario(self, district, crop, condition):
         """Performs a 'What-If' analysis fetching Ground Truth from BOTH DBs."""
@@ -104,11 +133,9 @@ class FederationEngine:
             return f"Simulation Failed: {e}"
 
     def _get_llm_data(self, prompt):
-        """Gets unstructured data with flexible sourcing and referencing."""
         if not prompt or prompt == "N/A":
             return "N/A", None
 
-        # UPDATED PROMPT: More flexible, research-oriented, and sourced.
         prompt = f"""You are an Expert Agricultural Knowledge and Research Engine.
 
 User Request: "{prompt}"
@@ -282,19 +309,27 @@ Provide one cohesive, internally consistent synthesis that integrates all availa
             print(f"LLM Error (Synthesis): {e}")
             return f"Error during final synthesis: {e}"
 
-    def run(self, decomposed_plan: dict, user_query: str):
+    def run(self, decomposed_plan: dict, user_query: str, decomposer=None):
+        """
+        Orchestrates the federation.
+        Now accepts 'decomposer' to enable self-correction.
+        """
         db1_sql = decomposed_plan.get("db1_sql")
         db2_sql = decomposed_plan.get("db2_sql")
         llm_prompt = decomposed_plan.get("llm_prompt")
 
         errors = []
 
-        # 1. Execute DB Queries
-        db1_res, db1_err = self._execute_query(self.db1_config, db1_sql, "DB1 (Local)")
+        # 1. Execute DB Queries with Self-Correction Logic
+        db1_res, db1_err = self._execute_with_retry(
+            self.db1_config, db1_sql, "DB1 (Local)", user_query, decomposer
+        )
         if db1_err:
             errors.append(db1_err)
 
-        db2_res, db2_err = self._execute_query(self.db2_config, db2_sql, "DB2 (Remote)")
+        db2_res, db2_err = self._execute_with_retry(
+            self.db2_config, db2_sql, "DB2 (Remote)", user_query, decomposer
+        )
         if db2_err:
             errors.append(db2_err)
 
@@ -311,12 +346,12 @@ Provide one cohesive, internally consistent synthesis that integrates all availa
                 db1_res.columns = [c.lower() for c in db1_res.columns]
                 db2_res.columns = [c.lower() for c in db2_res.columns]
 
-                # Find the Natural Keys (Intersection of columns)
+                # Intersection of columns
                 common_cols = list(set(db1_res.columns) & set(db2_res.columns))
 
                 if common_cols:
                     print(f"🔗 Strategy: Natural Join on columns: {common_cols}")
-                    # By passing the list of common columns to 'on', we strictly perform a Natural Join.
+                    # Natural JOIN.
                     joined_df = pd.merge(
                         db1_res,
                         db2_res,

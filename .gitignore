@@ -7,5 +7,7 @@ __pycache__/
 # Ignore raw data files. The database is the source of truth, not the CSVs.
 data/
 
+./data_extractor.py
+
 # Ignore secrets
 .env

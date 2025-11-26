@@ -15,7 +15,7 @@ class QueryDecomposer:
             print(f"Error configuring Gemini client: {e}")
             raise
 
-        # 2. Dynamic Schema Fetching (Restored from previous version)
+        # 2. Dynamic Schema Fetching
         print("QueryDecomposer: Dynamically fetching database schemas...")
         try:
             self.db1_schema = self._get_db1_schema(db1_config)
@@ -27,7 +27,7 @@ class QueryDecomposer:
             self.db1_schema = self._get_db1_schema_fallback()
             self.db2_schema = self._get_db2_schema_fallback()
 
-        # This maps vague human concepts to concrete SQL values.
+        # This maps concepts to concrete SQL values.
         self.ontology = """
 --- DOMAIN ONTOLOGY (SEMANTIC MAP) ---
 1. SEASONS (Mapping Months to Seasons):
@@ -270,3 +270,48 @@ You MUST return a single JSON object with these exact keys:
                     return {
                         "error": f"An error occurred: {str(e)}. No response text captured."
                     }
+
+    def fix_query(
+        self, original_query: str, bad_sql: str, error_msg: str, db_type: str
+    ):
+        """
+        Self-Correction Mechanism:
+        Takes the broken SQL and the error message, and asks the LLM to fix it.
+        """
+        print(f"\n🔧 SELF-CORRECTION: Attempting to fix SQL for {db_type}...")
+
+        target_schema = self.db1_schema if "DB1" in db_type else self.db2_schema
+
+        fix_prompt = f"""
+        You act as a SQL Debugger.
+
+        **CONTEXT:**
+        User Query: "{original_query}"
+        Target Database Schema: 
+        {target_schema}
+
+        **THE BUG:**
+        You generated this SQL:
+        {bad_sql}
+
+        It failed with this MySQL Error:
+        "{error_msg}"
+
+        **TASK:**
+        1. Analyze the error (e.g., column doesn't exist, syntax error, wrong table).
+        2. Correct the SQL to be valid for the provided schema.
+        3. Return ONLY the corrected SQL string in a JSON format.
+
+        **OUTPUT FORMAT:**
+        {{ "fixed_sql": "SELECT ... " }}
+        """
+
+        try:
+            response = self.model.generate_content(fix_prompt)
+            data = json.loads(response.text)
+            fixed_sql = data.get("fixed_sql")
+            print(f"✅ Fixed SQL: {fixed_sql}")
+            return fixed_sql
+        except Exception as e:
+            print(f"❌ Could not fix query: {e}")
+            return None
