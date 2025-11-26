@@ -6,6 +6,7 @@ from mysql.connector import Error
 
 class QueryDecomposer:
     def __init__(self, api_key: str, db1_config: dict, db2_config: dict):
+        # 1. Configure Gemini
         try:
             genai.configure(api_key=api_key)
             self.model_name = "gemini-2.5-flash"
@@ -14,18 +15,40 @@ class QueryDecomposer:
             print(f"Error configuring Gemini client: {e}")
             raise
 
+        # 2. Dynamic Schema Fetching (Restored from previous version)
         print("QueryDecomposer: Dynamically fetching database schemas...")
         try:
             self.db1_schema = self._get_db1_schema(db1_config)
             self.db2_schema = self._get_db2_schema(db2_config)
             print("✅ QueryDecomposer: Schemas fetched successfully.")
-            print({f"DB1 Schema: {self.db1_schema} | DB2 Schema: {self.db2_schema}"})
         except Exception as e:
             print(f"CRITICAL ERROR: Could not fetch schemas from database: {e}")
             print("Falling back to hardcoded schemas. System may be unstable.")
             self.db1_schema = self._get_db1_schema_fallback()
             self.db2_schema = self._get_db2_schema_fallback()
 
+        # This maps vague human concepts to concrete SQL values.
+        self.ontology = """
+--- DOMAIN ONTOLOGY (SEMANTIC MAP) ---
+1. SEASONS (Mapping Months to Seasons):
+   - "Kharif" (Monsoon): Months 6, 7, 8, 9, 10
+   - "Rabi" (Winter): Months 11, 12, 1, 2, 3
+   - "Zaid" (Summer): Months 4, 5
+
+2. CROP CATEGORIES:
+   - "Cereals": Rice, Wheat, Maize, Bajra, Jowar
+   - "Pulses": Gram, Tur, Urad, Moong
+   - "Cash Crops": Sugarcane, Cotton, Tobacco
+   - "Oilseeds": Groundnut, Mustard, Soybean
+
+3. SOIL DEFINITIONS:
+   - "Acidic": ph_level < 6.0
+   - "Neutral": ph_level BETWEEN 6.0 AND 7.5
+   - "Alkaline": ph_level > 7.5
+   - "Nitrogen Deficient": nitrogen_ppm < 280
+"""
+
+        # 4. Build Prompt & Model
         self.system_prompt = self._build_system_prompt()
         self.generation_config = {"response_mime_type": "application/json"}
         self.model = genai.GenerativeModel(
@@ -160,7 +183,7 @@ class QueryDecomposer:
         CREATE TABLE historical_yields (
             district_id bigint,
             crop_id bigint,
-            year bigint,
+            year VARCHAR(10),
             yield_ton_per_hectare double,
             area_hectares double,
             production_tonnes double,
@@ -183,22 +206,17 @@ You have access to two TOTALLY SEPARATE MySQL databases. You CANNOT JOIN across 
 **DB2 (Crops & Yields)** Schema:
 {self.db2_schema}
 
---- CRITICAL SQL RULES ---
-1.  **MySQL Dialect:** Generate standard, valid MySQL 8.0+ queries.
-2.  **No Cross-Database Joins:** A single SQL query MUST NOT reference tables from both DB1 and DB2.
-3.  **Explicit Joins:** Always use explicit `JOIN` syntax (e.g., `JOIN districts ON ...`).
-4.  **No Subqueries in ORDER BY:** Do not use complex subqueries in `ORDER BY` clauses.
-5.  **Filtering:** If a user asks about a `state` or `district`, include that `WHERE` clause in BOTH queries if applicable.
-6.  **MEDIATOR KEY MANDATE (COMPOSITE KEY):** The columns **'district' AND 'year'** MUST be in the SELECT list of EVERY SQL query (use aliases d.district, h.year, w.year). These are the critical join keys for the Python Mediator.
-7.  **AGGREGATION HANDLING (YEARLY):**
-    - If the user asks for "average rainfall", "total rainfall", or "average temperature" for a `year`, you MUST use `AVG()` or `SUM()` on the `weather_data` table and you MUST `GROUP BY d.district, w.year`.
-    - This is essential to aggregate monthly data (DB1) to match the yearly data (DB2).
-8.  **`only_full_group_by` COMPLIANCE (NEW CRITICAL RULE):**
-    - To prevent Error 1055, when you use `GROUP BY`, every column in the `SELECT` list MUST be either:
-        a) In the `GROUP BY` clause.
-        b) An aggregate function (e.g., `SUM()`, `AVG()`, `MAX()`, `MIN()`).
-    - **Example:** `SELECT d.district, h.year, SUM(h.production_tonnes)` is valid with `GROUP BY d.district, h.year`.
-    - **Example:** `SELECT d.district, h.year, h.production_tonnes` is **INVALID** with `GROUP BY d.district, h.year`.
+{self.ontology}
+
+--- SQL RULES ---
+1. **Valid MySQL:** Use standard MySQL 8.0 syntax.
+2. **Ontology:** Apply the mappings (e.g. Kharif -> Month 6-10).
+3. **No Cross-DB Joins:** Queries must be independent.
+4. **DISTRICT ALIGNMENT:** - You MUST select `district` (or `d.district`) in both queries if available.
+   - This is the PRIMARY KEY for the Python Mediator to join data.
+5. **YEARLY DATA:**
+   - IF the table has a `year` column, select it.
+   - IF the table DOES NOT have a `year` column (like `soil_conditions`), DO NOT fake it. Just select the district and the relevant columns. The Mediator will handle the broadcasting.
 
 --- OUTPUT FORMAT ---
 You MUST return a single JSON object with these exact keys:
@@ -209,31 +227,15 @@ You MUST return a single JSON object with these exact keys:
 --- CRITICAL RULE FOR llm_prompt ---
 - **ONLY** generate a prompt if the user explicitly asks for "advice", "recommendations", "explanations", "practices", or "why".
 - For purely factual queries (what, where, when, how much, total, average, list, compare, find), the `llm_prompt` **MUST** be "N/A".
-
---- EXAMPLES (UPDATED) ---
-User: "Rice yield in Punjab in 2022"
-JSON:
-{{
-  "db1_sql": "N/A",
-  "db2_sql": "SELECT d.district, h.year, h.yield_ton_per_hectare FROM historical_yields h JOIN districts d ON h.district_id = d.district_id JOIN crops c ON h.crop_id = c.crop_id WHERE d.state = 'Punjab' AND c.crop_name = 'Rice' AND h.year = 2022",
-  "llm_prompt": "N/A"
-}}
-
-User: "Compare the soil type and average rainfall in 2023 with the Wheat production for Ambala and Karnal."
-JSON:
-{{
-  "db1_sql": "SELECT d.district, w.year, s.soil_type, AVG(w.avg_rainfall_mm) AS avg_yearly_rainfall FROM weather_data w JOIN districts d ON w.district_id = d.district_id JOIN soil_conditions s ON d.district_id = s.district_id WHERE w.year = 2023 AND d.district IN ('Ambala', 'Karnal') GROUP BY d.district, w.year, s.soil_type",
-  "db2_sql": "SELECT d.district, h.year, SUM(h.production_tonnes) AS total_wheat_production FROM historical_yields h JOIN districts d ON h.district_id = d.district_id JOIN crops c ON h.crop_id = c.crop_id WHERE h.year = 2023 AND d.district IN ('Ambala', 'Karnal') AND c.crop_name = 'Wheat' GROUP BY d.district, h.year",
-  "llm_prompt": "N/A"
-}}
 """
 
     def decompose(self, user_query: str):
         """
         Takes a user query and returns the decomposed plan as a dictionary.
+        (Robust Error Handling Restored)
         """
         response = None
-        print(f"\nAnalyzing query with Gemini: '{user_query}'")
+        print(f"\nAnalyzing query with Gemini (with Ontology): '{user_query}'")
         try:
             response = self.model.generate_content([user_query])
             decomposed_plan = json.loads(response.text)
@@ -241,7 +243,10 @@ JSON:
         except Exception as e:
             print(f"An error occurred while communicating with the Gemini API: {e}")
             try:
-                response = self.model.generate_content([user_query])
+                # Retry: Sometimes the model returns text but the initial call failed or JSON parsing failed immediately above
+                if not response:
+                    response = self.model.generate_content([user_query])
+
                 response_text = response.text
 
                 try:
@@ -257,7 +262,7 @@ JSON:
             except Exception as e:
                 print(f"An error occurred while communicating with the Gemini API: {e}")
 
-                if response_text:
+                if "response_text" in locals() and response_text:
                     return {
                         "error": f"An error occurred: {str(e)}. Response text: {response_text}"
                     }
