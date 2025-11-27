@@ -225,8 +225,16 @@ You MUST return a single JSON object with these exact keys:
 - `"llm_prompt"`: The part of the user's query that CANNOT be answered by the databases (e.g., requests for advice, explanations, or general knowledge).
 
 --- CRITICAL RULE FOR llm_prompt ---
-- **ONLY** generate a prompt if the user explicitly asks for "advice", "recommendations", "explanations", "practices", or "why".
+- **ONLY** generate a prompt if the user explicitly asks for "advice", "recommendations", "explanations", "practices", or "why" or "how", etc..
 - For purely factual queries (what, where, when, how much, total, average, list, compare, find), the `llm_prompt` **MUST** be "N/A".
+
+--- CRITICAL RULE FOR UNKNOWN DATA ---
+- If the user asks for something completely unrelated to the schemas or you know this kind of data won't be retrived from our databases, do this:
+    1. Set `"db1_sql"` to "N/A".
+    2. Set `"db2_sql"` to "N/A".
+    3. Copy the **ENTIRE** user query into `"llm_prompt"`.
+    
+- **NEVER** hallucinate tables or columns. If the data isn't there, send the task to `llm_prompt`.
 """
 
     def decompose(self, user_query: str):

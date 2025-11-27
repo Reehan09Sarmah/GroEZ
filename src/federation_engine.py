@@ -39,16 +39,11 @@ class FederationEngine:
             return None, str(e)
 
     def _execute_with_retry(self, config, query, db_label, user_query, decomposer):
-        """
-        Wrapper around _execute_query that implements the Reflexion (Self-Correction) loop.
-        If an error occurs, it asks the decomposer to fix the SQL and retries once.
-        """
-
         df, error = self._execute_query(config, query, db_label, attempt=1)
 
         if error and decomposer:
             print(f"⚠️ Encountered Error in {db_label}: {error}")
-            print("🔄 Initiating Self-Correction Loop (Reflexion)...")
+            print("🔄 Initiating Self-Correction...")
 
             fixed_sql = decomposer.fix_query(user_query, query, error, db_label)
 
@@ -231,6 +226,11 @@ Mandatory Requirements:
 6. **Missing or Conflicting Information**
    - If data sources disagree, provide a short reconciliation or state the uncertainty.
    - If necessary information is absent, state the gap briefly and provide the best-possible interpretation based on available evidence.
+   
+**CRITICAL INSTRUCTION FOR MISSING DATA:**
+    - If DB1 and DB2 data is "N/A", **YOU MUST** rely entirely on the LLM Research output to answer the user's question.
+    - Do not say "I cannot answer". Use the provided research text.
+    - If the user asked a query that cannot be handled by DBs, that the database couldn't answer, answer it using your general knowledge capabilities found in the LLM Research section.
 
 Output must be a single, cohesive, self-contained synthesis that integrates all available evidence. can be used downstream in summarization or decision-support models. It should be easy to understand and can be applied right away.
 
@@ -297,6 +297,11 @@ Requirements:
    - No greetings, no conversational filler, no role identification.
    - Clear, concise, structured explanation suitable for downstream summarization.
    - Subheadings allowed only if they improve clarity.
+   
+**CRITICAL INSTRUCTION FOR MISSING DATA:**
+    - If DB1 and DB2 data is "N/A", **YOU MUST** rely entirely on the LLM Research output to answer the user's question.
+    - Do not say "I cannot answer". Use the provided research text.
+    - If the user asked a query that cannot be handled by DBs, that the database couldn't answer, answer it using your general knowledge capabilities found in the LLM Research section.
 
 Provide one cohesive, internally consistent synthesis that integrates all available evidence.
 
