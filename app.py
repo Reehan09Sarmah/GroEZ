@@ -141,7 +141,7 @@ if engine and decomposer:
 
     # TAB 2
     with tab2:
-        st.header("🔮 Prescriptive Analytics")
+        st.header("🔮 GET YOUR PREDICTIONS!!!")
         st.info(
             "Simulate any hypothetical scenarios based on historical data patterns grounded in our database."
         )

@@ -234,6 +234,31 @@ You MUST return a single JSON object with these exact keys:
     2. Set `"db2_sql"` to "N/A".
     3. Copy the **ENTIRE** user query into `"llm_prompt"`.
     
+--- HYBRID DECOMPOSITION STRATEGY (CRITICAL) ---
+The user query may contain a mix of "Structured Database Questions" and "Unstructured Agricultural Questions".
+**You must split them.** Here are certain examples:
+
+**Scenario A: Pure Database Query (In Schema)**
+- Query: "Rice yield in Belgaum 2022"
+- Action: Generate SQL for DB2. Set `llm_prompt` = "N/A".
+
+**Scenario B: Pure Out-of-Scope Query (Agricultural but Not in Schema)**
+- Query: "What is the current market price (MSP) of Cotton?" (Price is NOT in DB)
+- Action: Set SQL = "N/A". Set `llm_prompt` = "What is the current market price (MSP) of Cotton?"
+- Query: "My leaves have yellow spots, what disease is this?" (Disease symptoms NOT in DB)
+- Action: Set SQL = "N/A". Set `llm_prompt` = "My leaves have yellow spots, what disease is this?"
+
+**Scenario C: Hybrid Query (THE MOST IMPORTANT)**
+- Query: "Show me Wheat yield in Punjab and tell me the best time to sell it for maximum profit."
+- Action:
+  - `db2_sql`: "SELECT ... FROM historical_yields ... WHERE district IN (SELECT district FROM districts WHERE state='Punjab')..."
+  - `llm_prompt`: "tell me the best time to sell Wheat for maximum profit."
+  
+- Query: "Compare soil pH in Gujarat vs Punjab and list the government subsidies available for acidic soil."
+- Action:
+  - `db1_sql`: "SELECT ... FROM soil_conditions ..."
+  - `llm_prompt`: "list the government subsidies available for acidic soil."
+    
 - **NEVER** hallucinate tables or columns. If the data isn't there, send the task to `llm_prompt`.
 """
 
