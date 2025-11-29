@@ -46,7 +46,7 @@ if engine and decomposer:
         
         🚀 **Yield Advice:** Proven tips to boost production.
         
-        🌍 **Land Analysis:** Know your soil inside out.
+        🌍 **Land Analysis:** Know about soil inside out.
         
         🔮 **Predictions:** Simulate the future with AI.
         """
@@ -87,7 +87,7 @@ if engine and decomposer:
                     st.divider()
                     st.subheader("Analysis Complete")
 
-                    with st.expander("Show Execution Plan (Decomposed Queries)"):
+                    with st.expander("Show Decomposed Queries"):
                         st.json(plan)
 
                     with st.expander("Show Raw Data from Databases"):

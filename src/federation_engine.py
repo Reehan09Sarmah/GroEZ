@@ -42,19 +42,19 @@ class FederationEngine:
         df, error = self._execute_query(config, query, db_label, attempt=1)
 
         if error and decomposer:
-            print(f"⚠️ Encountered Error in {db_label}: {error}")
-            print("🔄 Initiating Self-Correction...")
+            print(f"Error in {db_label}: {error}")
+            print("Initiating SQL-Correction...")
 
             fixed_sql = decomposer.fix_query(user_query, query, error, db_label)
 
             if fixed_sql:
-                print(f"🚀 Retrying {db_label} with Fixed SQL: {fixed_sql}")
+                print(f"Retrying {db_label} with Fixed SQL: {fixed_sql}")
                 df_retry, error_retry = self._execute_query(
                     config, fixed_sql, db_label, attempt=2
                 )
 
                 if not error_retry:
-                    print(f"✅ Self-Correction Successful for {db_label}!")
+                    print(f"Self-Correction Successful for {db_label}!")
                     return df_retry, None
                 else:
                     return None, f"Retry failed: {error_retry}"
@@ -63,8 +63,8 @@ class FederationEngine:
 
         return df, error
 
+    # Perform predictions based on ground data
     def simulate_scenario(self, district, crop, condition):
-        """Performs a 'What-If' analysis fetching Ground Truth from BOTH DBs."""
         print(f"🔮 Running Simulation: {district}, {crop} -> {condition}")
 
         # 1. Fetch Yield History (DB2)
@@ -82,7 +82,7 @@ class FederationEngine:
             if yields_df is not None and not yields_df.empty
             else "No Data"
         )
-        # We aggregate monthly data to yearly to match the yield granularity
+        # We aggregate monthly data to yearly to match the yield
         sql_weather = f"""
             SELECT w.year, SUM(w.avg_rainfall_mm) as total_annual_rainfall, AVG(w.avg_temp_celsius) as avg_temp
             FROM weather_data w
@@ -173,6 +173,7 @@ Output must be self-contained and directly usable as unstructured research text 
             print(f"LLM Error (Data): {e}")
             return None, f"Error getting LLM data: {e}"
 
+    # Get Summary
     def _synthesize_final_report(self, user_query, joined_df, db1_df, db2_df, llm_data):
         structured_json = "N/A"
         synthesis_prompt = ""
@@ -314,6 +315,7 @@ Provide one cohesive, internally consistent synthesis that integrates all availa
             print(f"LLM Error (Synthesis): {e}")
             return f"Error during final synthesis: {e}"
 
+    # Run the whole system - from getting decomposed queries TO federating them across DBs, collecting DATA
     def run(self, decomposed_plan: dict, user_query: str, decomposer=None):
         """
         Orchestrates the federation.
@@ -325,7 +327,7 @@ Provide one cohesive, internally consistent synthesis that integrates all availa
 
         errors = []
 
-        # 1. Execute DB Queries with Self-Correction Logic
+        # Execute DB Queries
         db1_res, db1_err = self._execute_with_retry(
             self.db1_config, db1_sql, "DB1 (Local)", user_query, decomposer
         )
@@ -338,7 +340,7 @@ Provide one cohesive, internally consistent synthesis that integrates all availa
         if db2_err:
             errors.append(db2_err)
 
-        # We join on ALL columns that share the same name.
+        # join on ALL columns with same name.
         joined_df = pd.DataFrame()
         try:
             if (
@@ -351,12 +353,11 @@ Provide one cohesive, internally consistent synthesis that integrates all availa
                 db1_res.columns = [c.lower() for c in db1_res.columns]
                 db2_res.columns = [c.lower() for c in db2_res.columns]
 
-                # Intersection of columns
+                # Get Common Columns
                 common_cols = list(set(db1_res.columns) & set(db2_res.columns))
 
                 if common_cols:
                     print(f"🔗 Strategy: Natural Join on columns: {common_cols}")
-                    # Natural JOIN.
                     joined_df = pd.merge(
                         db1_res,
                         db2_res,
@@ -366,7 +367,7 @@ Provide one cohesive, internally consistent synthesis that integrates all availa
                     )
                 else:
                     errors.append(
-                        "Join Failed: No common columns found for Natural Join. (Cross Product prevented)"
+                        "Join Failed: No common columns found for Join. (Cross Product prevented)"
                     )
 
             elif db1_res is not None and not db1_res.empty:
@@ -377,7 +378,7 @@ Provide one cohesive, internally consistent synthesis that integrates all availa
         except Exception as e:
             errors.append(f"Join Processing Failed: {e}")
 
-        # 3. Get LLM Advice & Synthesize
+        # Get LLM Advice & Summarize
         llm_data, llm_err = self._get_llm_data(llm_prompt)
         if llm_err:
             errors.append(llm_err)

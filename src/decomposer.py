@@ -27,7 +27,7 @@ class QueryDecomposer:
             self.db1_schema = self._get_db1_schema_fallback()
             self.db2_schema = self._get_db2_schema_fallback()
 
-        # This maps concepts to concrete SQL values.
+        # Dictionary for LLM.
         self.ontology = """
 --- DOMAIN ONTOLOGY (SEMANTIC MAP) ---
 1. SEASONS (Mapping Months to Seasons):
@@ -55,7 +55,7 @@ class QueryDecomposer:
    - "Nitrogen Deficient": nitrogen_ppm < 280
 """
 
-        # 4. Build Prompt & Model
+        # Initialize the LLM API
         self.system_prompt = self._build_system_prompt()
         self.generation_config = {"response_mime_type": "application/json"}
         self.model = genai.GenerativeModel(
@@ -64,11 +64,8 @@ class QueryDecomposer:
             system_instruction=self.system_prompt,
         )
 
+    # Get schema of our DBs dynamically
     def _fetch_schema_string(self, db_config: dict) -> str:
-        """
-        Connects to a database and builds a schema string
-        by querying INFORMATION_SCHEMA.
-        """
         schema_string = ""
         db_name = db_config.get("database")
 
@@ -199,8 +196,8 @@ class QueryDecomposer:
         );
         """
 
+    # Prompt to decompose text-to-SQL
     def _build_system_prompt(self):
-        """Constructs a detailed system prompt to guide the LLM to generate valid MySQL."""
         return f"""You are an expert SQL query generator for a federated agriculture system. 
 Your task is to decompose a user's natural language query into a JSON execution plan.
 
@@ -213,6 +210,7 @@ You have access to two TOTALLY SEPARATE MySQL databases. You CANNOT JOIN across 
 **DB2 (Crops & Yields)** Schema:
 {self.db2_schema}
 
+-- DICTIONARY FOR YOU --
 {self.ontology}
 
 --- SQL RULES ---
@@ -228,27 +226,8 @@ You have access to two TOTALLY SEPARATE MySQL databases. You CANNOT JOIN across 
 6. **SELECT DESCRIPTIVE COLUMNS (CRITICAL):**
    - **Never select ONLY the district.**
    - Eg: If the user filters by "Acidic soil", you MUST select `ph_level` and `soil_type` so the user can see the values.
-   - Eg: If the user asks for "Cash Crops", you MUST select `c.crop_name`, `h.production_tonnes`, and `h.yield_ton_per_hectare`.
    - Always include the columns that justify WHY a record was returned.
-
---- OUTPUT FORMAT ---
-You MUST return a single JSON object with these exact keys:
-- `"db1_sql"`: valid MySQL query for DB1, or "N/A" if not needed.
-- `"db2_sql"`: valid MySQL query for DB2, or "N/A" if not needed.
-- `"llm_prompt"`: The part of the user's query that CANNOT be answered by the databases (e.g., requests for advice, explanations, or general knowledge).
-
---- CRITICAL RULE FOR llm_prompt ---
-- **ONLY** generate a prompt if the user explicitly asks for "advice", "recommendations", "explanations", "practices", or "why" or "how", etc..
-- For purely factual queries (what, where, when, how much, total, average, list, compare, find), the `llm_prompt` **MUST** be "N/A".
-
---- CRITICAL RULE FOR UNKNOWN DATA ---
-- If the user asks for something completely unrelated to the schemas or you know this kind of data won't be retrived from our databases, do this:
-    1. Set `"db1_sql"` to "N/A".
-    2. Set `"db2_sql"` to "N/A".
-    3. Copy the **ENTIRE** user query into `"llm_prompt"`.
-    
-
-    
+   
 --- HYBRID DECOMPOSITION STRATEGY (CRITICAL) ---
 The user query may contain a mix of "Structured Database Questions" and "Unstructured Agricultural Questions".
 **You must split them.** Here are certain examples:
@@ -263,25 +242,49 @@ The user query may contain a mix of "Structured Database Questions" and "Unstruc
 - Query: "My leaves have yellow spots, what disease is this?" (Disease symptoms NOT in DB)
 - Action: Set SQL = "N/A". Set `llm_prompt` = "My leaves have yellow spots, what disease is this?"
 
-**Scenario C: Hybrid Query (THE MOST IMPORTANT)**
+**Scenario C: Hybrid (DB2 + LLM)**
 - Query: "Show me Wheat yield in Punjab and tell me the best time to sell it for maximum profit."
 - Action:
-  - `db2_sql`: "SELECT ... FROM historical_yields ... WHERE district IN (SELECT district FROM districts WHERE state='Punjab')..."
+  - `db1_sql`: "N/A"
+  - `db2_sql`: "SELECT d.district, c.crop_name, h.year, h.yield_ton_per_hectare FROM historical_yields h JOIN districts d ON h.district_id = d.district_id JOIN crops c ON h.crop_id = c.crop_id WHERE d.state='Punjab' AND c.crop_name='Wheat'"
   - `llm_prompt`: "tell me the best time to sell Wheat for maximum profit."
-  
+
+**Scenario D: Hybrid (DB1 + LLM)**
 - Query: "Compare soil pH in Gujarat vs Punjab and list the government subsidies available for acidic soil."
 - Action:
-  - `db1_sql`: "SELECT ... FROM soil_conditions ..."
+  - `db1_sql`: "SELECT d.district, d.state, s.ph_level, s.soil_type FROM soil_conditions s JOIN districts d ON s.district_id = d.district_id WHERE d.state IN ('Gujarat', 'Punjab')"
+  - `db2_sql`: "N/A"
   - `llm_prompt`: "list the government subsidies available for acidic soil."
+
+**Scenario E: Full Hybrid (DB1 + DB2 + LLM)**
+- Query: "Show rainfall in Belgaum (DB1) and Rice yield in 2022 (DB2) and explain if this rainfall is sufficient for Rice according to ICAR standards."
+- Action:
+  - `db1_sql`: "SELECT d.district, w.year, w.avg_rainfall_mm FROM weather_data w JOIN districts d ON w.district_id = d.district_id WHERE d.district='Belgaum'"
+  - `db2_sql`: "SELECT d.district, c.crop_name, h.year, h.yield_ton_per_hectare FROM historical_yields h JOIN districts d ON h.district_id = d.district_id JOIN crops c ON h.crop_id = c.crop_id WHERE d.district='Belgaum' AND c.crop_name='Rice' AND h.year=2022"
+  - `llm_prompt`: "explain if this rainfall amount is sufficient for Rice according to ICAR standards."
     
 - **NEVER** hallucinate tables or columns. If the data isn't there, send the task to `llm_prompt`.
+
+
+--- CRITICAL RULE FOR llm_prompt ---
+- **ONLY** generate a prompt if the user explicitly asks for "advice", "recommendations", "explanations", "practices", or "why" or "how", etc..
+- For purely factual queries (what, where, when, how much, total, average, list, compare, find), the `llm_prompt` **MUST** be "N/A".
+
+--- CRITICAL RULE FOR UNKNOWN DATA ---
+- If the user asks for something completely unrelated to the schemas or you know this kind of data won't be retrived from our databases, do this:
+    1. Set `"db1_sql"` to "N/A".
+    2. Set `"db2_sql"` to "N/A".
+    3. Copy the **ENTIRE** user query into `"llm_prompt"`.
+
+--- OUTPUT FORMAT ---
+You MUST return a single JSON object with these exact keys:
+- `"db1_sql"`: valid MySQL query for DB1, or "N/A" if not needed.
+- `"db2_sql"`: valid MySQL query for DB2, or "N/A" if not needed.
+- `"llm_prompt"`: The part of the user's query that CANNOT be answered by the databases (e.g., requests for advice, explanations, or general knowledge).
 """
 
+    # decomposes user query and gets the execution plan
     def decompose(self, user_query: str):
-        """
-        Takes a user query and returns the decomposed plan as a dictionary.
-        (Robust Error Handling Restored)
-        """
         response = None
         print(f"\nAnalyzing query with Gemini (with Ontology): '{user_query}'")
         try:
@@ -291,7 +294,7 @@ The user query may contain a mix of "Structured Database Questions" and "Unstruc
         except Exception as e:
             print(f"An error occurred while communicating with the Gemini API: {e}")
             try:
-                # Retry: Sometimes the model returns text but the initial call failed or JSON parsing failed immediately above
+                # Retry:
                 if not response:
                     response = self.model.generate_content([user_query])
 
@@ -319,13 +322,10 @@ The user query may contain a mix of "Structured Database Questions" and "Unstruc
                         "error": f"An error occurred: {str(e)}. No response text captured."
                     }
 
+    # If somehow, it generates Wrong SQL Queries, it tries to fix it by re-calling the LLM along with the error
     def fix_query(
         self, original_query: str, bad_sql: str, error_msg: str, db_type: str
     ):
-        """
-        Self-Correction Mechanism:
-        Takes the broken SQL and the error message, and asks the LLM to fix it.
-        """
         print(f"\n🔧 SELF-CORRECTION: Attempting to fix SQL for {db_type}...")
 
         target_schema = self.db1_schema if "DB1" in db_type else self.db2_schema
