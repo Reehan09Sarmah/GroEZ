@@ -35,11 +35,18 @@ class QueryDecomposer:
    - "Rabi" (Winter): Months 11, 12, 1, 2, 3
    - "Zaid" (Summer): Months 4, 5
 
-2. CROP CATEGORIES:
-   - "Cereals": Rice, Wheat, Maize, Bajra, Jowar
-   - "Pulses": Gram, Tur, Urad, Moong
-   - "Cash Crops": Sugarcane, Cotton, Tobacco
-   - "Oilseeds": Groundnut, Mustard, Soybean
+2. CROP CATEGORIES (Exact DB String Matches):
+   - "Cereals": 'Rice', 'Wheat', 'Maize', 'Bajra', 'Ragi', 'Jowar', 'Barley', 'Small millets', 'Other Cereals'
+   
+   - "Pulses": 'Gram', 'Arhar/Tur', 'Urad', 'Moong(Green Gram)', 'Masoor', 'Horse-gram', 'Peas & beans (Pulses)', 'Moth', 'Khesari', 'Cowpea(Lobia)', 'Other Kharif pulses', 'Other Rabi pulses', 'Other Summer Pulses'
+   
+   - "Oilseeds": 'Groundnut', 'Rapeseed &Mustard', 'Soybean', 'Soyabean', 'Sunflower', 'Safflower', 'Castor seed', 'Linseed', 'Niger seed', 'Sesamum', 'other oilseeds', 'Oilseeds total'
+   
+   - "Cash Crops" (Commercial): 'Sugarcane', 'Cotton', 'Cotton(lint)', 'Jute', 'Mesta', 'Tobacco', 'Guar seed', 'Sannhamp'
+   
+   - "Spices & Condiments": 'Dry chillies', 'Black pepper', 'Cardamom', 'Coriander', 'Ginger', 'Dry Ginger', 'Turmeric', 'Garlic', 'Onion'
+   
+   - "Plantation/Fruits/Tubers": 'Arecanut', 'Banana', 'Cashewnut', 'Coconut', 'Potato', 'Sweet potato', 'Tapioca'
 
 3. SOIL DEFINITIONS:
    - "Acidic": ph_level < 6.0
@@ -217,6 +224,12 @@ You have access to two TOTALLY SEPARATE MySQL databases. You CANNOT JOIN across 
 5. **YEARLY DATA:**
    - IF the table has a `year` column, select it.
    - IF the table DOES NOT have a `year` column (like `soil_conditions`), DO NOT fake it. Just select the district and the relevant columns. The Mediator will handle the broadcasting.
+   
+6. **SELECT DESCRIPTIVE COLUMNS (CRITICAL):**
+   - **Never select ONLY the district.**
+   - Eg: If the user filters by "Acidic soil", you MUST select `ph_level` and `soil_type` so the user can see the values.
+   - Eg: If the user asks for "Cash Crops", you MUST select `c.crop_name`, `h.production_tonnes`, and `h.yield_ton_per_hectare`.
+   - Always include the columns that justify WHY a record was returned.
 
 --- OUTPUT FORMAT ---
 You MUST return a single JSON object with these exact keys:
@@ -233,6 +246,8 @@ You MUST return a single JSON object with these exact keys:
     1. Set `"db1_sql"` to "N/A".
     2. Set `"db2_sql"` to "N/A".
     3. Copy the **ENTIRE** user query into `"llm_prompt"`.
+    
+
     
 --- HYBRID DECOMPOSITION STRATEGY (CRITICAL) ---
 The user query may contain a mix of "Structured Database Questions" and "Unstructured Agricultural Questions".
