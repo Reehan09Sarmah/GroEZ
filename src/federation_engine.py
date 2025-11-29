@@ -205,7 +205,6 @@ CRITICAL INSTRUCTION:
 3. Produce a cohesive final answer.
 """
         try:
-            # We can rely on internal knowledge here too as a backup
             response = self.synthesis_model.generate_content(synthesis_prompt)
             return response.text
         except Exception as e:
@@ -218,7 +217,7 @@ CRITICAL INSTRUCTION:
 
         errors = []
 
-        # 1. Execute DB Queries (STEP 1: GET DATA)
+        # 1. Execute DB Queries
         db1_res, db1_err = self._execute_with_retry(
             self.db1_config, db1_sql, "DB1 (Local)", user_query, decomposer
         )
@@ -231,7 +230,7 @@ CRITICAL INSTRUCTION:
         if db2_err:
             errors.append(db2_err)
 
-        # 2. Join (STEP 2: MERGE DATA)
+        # 2. Join
         joined_df = pd.DataFrame()
         try:
             if (
@@ -262,7 +261,7 @@ CRITICAL INSTRUCTION:
         except Exception as e:
             errors.append(f"Join Processing Failed: {e}")
 
-        # 3. Context Construction (NEW STEP: PREPARE CONTEXT)
+        # 3. Context Construction
         db_context_str = ""
         if not joined_df.empty:
             db_context_str += self._extract_context_string(joined_df, "Joined Results")
@@ -272,8 +271,7 @@ CRITICAL INSTRUCTION:
             if db2_res is not None:
                 db_context_str += self._extract_context_string(db2_res, "DB2") + "\n"
 
-        # 4. Get LLM Advice (STEP 3: GET LLM DATA WITH CONTEXT)
-        # Now we pass the 'db_context_str' so the LLM knows what "this district" means!
+        # 4. Get LLM Advice
         llm_data, llm_err = self._get_llm_data(llm_prompt, db_context=db_context_str)
         if llm_err:
             errors.append(llm_err)
