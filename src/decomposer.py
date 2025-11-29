@@ -27,7 +27,7 @@ class QueryDecomposer:
             self.db1_schema = self._get_db1_schema_fallback()
             self.db2_schema = self._get_db2_schema_fallback()
 
-        # Dictionary for LLM.
+        # 3. DOMAIN ONTOLOGY (Updated with Real DB Values)
         self.ontology = """
 --- DOMAIN ONTOLOGY (SEMANTIC MAP) ---
 1. SEASONS (Mapping Months to Seasons):
@@ -37,15 +37,10 @@ class QueryDecomposer:
 
 2. CROP CATEGORIES (Exact DB String Matches):
    - "Cereals": 'Rice', 'Wheat', 'Maize', 'Bajra', 'Ragi', 'Jowar', 'Barley', 'Small millets', 'Other Cereals'
-   
    - "Pulses": 'Gram', 'Arhar/Tur', 'Urad', 'Moong(Green Gram)', 'Masoor', 'Horse-gram', 'Peas & beans (Pulses)', 'Moth', 'Khesari', 'Cowpea(Lobia)', 'Other Kharif pulses', 'Other Rabi pulses', 'Other Summer Pulses'
-   
    - "Oilseeds": 'Groundnut', 'Rapeseed &Mustard', 'Soybean', 'Soyabean', 'Sunflower', 'Safflower', 'Castor seed', 'Linseed', 'Niger seed', 'Sesamum', 'other oilseeds', 'Oilseeds total'
-   
    - "Cash Crops" (Commercial): 'Sugarcane', 'Cotton', 'Cotton(lint)', 'Jute', 'Mesta', 'Tobacco', 'Guar seed', 'Sannhamp'
-   
    - "Spices & Condiments": 'Dry chillies', 'Black pepper', 'Cardamom', 'Coriander', 'Ginger', 'Dry Ginger', 'Turmeric', 'Garlic', 'Onion'
-   
    - "Plantation/Fruits/Tubers": 'Arecanut', 'Banana', 'Cashewnut', 'Coconut', 'Potato', 'Sweet potato', 'Tapioca'
 
 3. SOIL DEFINITIONS:
@@ -55,7 +50,7 @@ class QueryDecomposer:
    - "Nitrogen Deficient": nitrogen_ppm < 280
 """
 
-        # Initialize the LLM API
+        # 4. Build Prompt & Model
         self.system_prompt = self._build_system_prompt()
         self.generation_config = {"response_mime_type": "application/json"}
         self.model = genai.GenerativeModel(
@@ -64,8 +59,8 @@ class QueryDecomposer:
             system_instruction=self.system_prompt,
         )
 
-    # Get schema of our DBs dynamically
     def _fetch_schema_string(self, db_config: dict) -> str:
+        """Connects to a database and builds a schema string."""
         schema_string = ""
         db_name = db_config.get("database")
 
@@ -73,7 +68,6 @@ class QueryDecomposer:
             conn = mysql.connector.connect(**db_config)
             cursor = conn.cursor(dictionary=True)
 
-            # Fetch tables
             cursor.execute(
                 "SELECT table_name FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = %s",
                 (db_name,),
@@ -144,59 +138,19 @@ class QueryDecomposer:
         return self._fetch_schema_string(db2_config)
 
     def _get_db1_schema_fallback(self):
-        """Returns the hardcoded schema for DB1 if dynamic fetch fails."""
         return """
-        -- DB1 (groez_db1) contains data on weather and soil conditions.
-        CREATE TABLE districts (
-            district_id bigint PRIMARY KEY,
-            district text,
-            state text
-        );
-        CREATE TABLE soil_conditions (
-            district_id bigint,
-            soil_type text,
-            ph_level double,
-            nitrogen_ppm bigint,
-            phosphorus_ppm bigint,
-            potassium_ppm bigint,
-            FOREIGN KEY (district_id) REFERENCES districts(district_id)
-        );
-        CREATE TABLE weather_data (
-            district_id bigint,
-            year bigint,
-            month bigint,
-            avg_temp_celsius double,
-            avg_rainfall_mm double,
-            FOREIGN KEY (district_id) REFERENCES districts(district_id)
-        );
+        CREATE TABLE districts (district_id bigint PRIMARY KEY, district text, state text);
+        CREATE TABLE soil_conditions (district_id bigint, soil_type text, ph_level double, nitrogen_ppm bigint, FOREIGN KEY (district_id) REFERENCES districts(district_id));
+        CREATE TABLE weather_data (district_id bigint, year bigint, month bigint, avg_temp_celsius double, avg_rainfall_mm double, FOREIGN KEY (district_id) REFERENCES districts(district_id));
         """
 
     def _get_db2_schema_fallback(self):
-        """Returns the hardcoded schema for DB2 if dynamic fetch fails."""
         return """
-        -- DB2 (groez_db2) contains data on crop types and historical yields.
-        CREATE TABLE districts (
-            district_id bigint PRIMARY KEY,
-            district text,
-            state text
-        );
-        CREATE TABLE crops (
-            crop_id bigint PRIMARY KEY,
-            crop_name text
-        );
-        CREATE TABLE historical_yields (
-            district_id bigint,
-            crop_id bigint,
-            year VARCHAR(10),
-            yield_ton_per_hectare double,
-            area_hectares double,
-            production_tonnes double,
-            FOREIGN KEY (district_id) REFERENCES districts(district_id),
-            FOREIGN KEY (crop_id) REFERENCES crops(crop_id)
-        );
+        CREATE TABLE districts (district_id bigint PRIMARY KEY, district text, state text);
+        CREATE TABLE crops (crop_id bigint PRIMARY KEY, crop_name text);
+        CREATE TABLE historical_yields (district_id bigint, crop_id bigint, year VARCHAR(10), yield_ton_per_hectare double, area_hectares double, production_tonnes double, FOREIGN KEY (district_id) REFERENCES districts(district_id), FOREIGN KEY (crop_id) REFERENCES crops(crop_id));
         """
 
-    # Prompt to decompose text-to-SQL
     def _build_system_prompt(self):
         return f"""You are an expert SQL query generator for a federated agriculture system. 
 Your task is to decompose a user's natural language query into a JSON execution plan.
@@ -210,7 +164,6 @@ You have access to two TOTALLY SEPARATE MySQL databases. You CANNOT JOIN across 
 **DB2 (Crops & Yields)** Schema:
 {self.db2_schema}
 
--- DICTIONARY FOR YOU --
 {self.ontology}
 
 --- SQL RULES ---
@@ -219,15 +172,22 @@ You have access to two TOTALLY SEPARATE MySQL databases. You CANNOT JOIN across 
 3. **No Cross-DB Joins:** Queries must be independent.
 4. **DISTRICT ALIGNMENT:** - You MUST select `district` (or `d.district`) in both queries if available.
    - This is the PRIMARY KEY for the Python Mediator to join data.
-5. **YEARLY DATA:**
+5. **SELECT DESCRIPTIVE COLUMNS (CRITICAL):**
+   - **Never select ONLY the district.**
+   - If the user filters by "Acidic soil", you MUST select `ph_level` and `soil_type`.
+   - If the user asks for "Cash Crops", you MUST select `c.crop_name`, `h.production_tonnes`.
+   - Always include the columns that justify WHY a record was returned.
+
+6. **YEARLY DATA:**
    - IF the table has a `year` column, select it.
    - IF the table DOES NOT have a `year` column (like `soil_conditions`), DO NOT fake it. Just select the district and the relevant columns. The Mediator will handle the broadcasting.
-   
-6. **SELECT DESCRIPTIVE COLUMNS (CRITICAL):**
-   - **Never select ONLY the district.**
-   - Eg: If the user filters by "Acidic soil", you MUST select `ph_level` and `soil_type` so the user can see the values.
-   - Always include the columns that justify WHY a record was returned.
-   
+
+--- OUTPUT FORMAT ---
+You MUST return a single JSON object with these exact keys:
+- `"db1_sql"`: valid MySQL query for DB1, or "N/A" if not needed.
+- `"db2_sql"`: valid MySQL query for DB2, or "N/A" if not needed.
+- `"llm_prompt"`: The part of the user's query that CANNOT be answered by the databases.
+
 --- HYBRID DECOMPOSITION STRATEGY (CRITICAL) ---
 The user query may contain a mix of "Structured Database Questions" and "Unstructured Agricultural Questions".
 **You must split them.** Here are certain examples:
@@ -249,41 +209,15 @@ The user query may contain a mix of "Structured Database Questions" and "Unstruc
   - `db2_sql`: "SELECT d.district, c.crop_name, h.year, h.yield_ton_per_hectare FROM historical_yields h JOIN districts d ON h.district_id = d.district_id JOIN crops c ON h.crop_id = c.crop_id WHERE d.state='Punjab' AND c.crop_name='Wheat'"
   - `llm_prompt`: "tell me the best time to sell Wheat for maximum profit."
 
-**Scenario D: Hybrid (DB1 + LLM)**
-- Query: "Compare soil pH in Gujarat vs Punjab and list the government subsidies available for acidic soil."
+**Scenario D: Hybrid (Demographics/Population)**
+- Query: "Find the district with max Rice yield and tell me its population."
 - Action:
-  - `db1_sql`: "SELECT d.district, d.state, s.ph_level, s.soil_type FROM soil_conditions s JOIN districts d ON s.district_id = d.district_id WHERE d.state IN ('Gujarat', 'Punjab')"
-  - `db2_sql`: "N/A"
-  - `llm_prompt`: "list the government subsidies available for acidic soil."
+  - `db2_sql`: "SELECT d.district, h.yield_ton_per_hectare FROM historical_yields h ... ORDER BY yield_ton_per_hectare DESC LIMIT 1"
+  - `llm_prompt`: "tell me the population of this district."
 
-**Scenario E: Full Hybrid (DB1 + DB2 + LLM)**
-- Query: "Show rainfall in Belgaum (DB1) and Rice yield in 2022 (DB2) and explain if this rainfall is sufficient for Rice according to ICAR standards."
-- Action:
-  - `db1_sql`: "SELECT d.district, w.year, w.avg_rainfall_mm FROM weather_data w JOIN districts d ON w.district_id = d.district_id WHERE d.district='Belgaum'"
-  - `db2_sql`: "SELECT d.district, c.crop_name, h.year, h.yield_ton_per_hectare FROM historical_yields h JOIN districts d ON h.district_id = d.district_id JOIN crops c ON h.crop_id = c.crop_id WHERE d.district='Belgaum' AND c.crop_name='Rice' AND h.year=2022"
-  - `llm_prompt`: "explain if this rainfall amount is sufficient for Rice according to ICAR standards."
-    
-- **NEVER** hallucinate tables or columns. If the data isn't there, send the task to `llm_prompt`.
-
-
---- CRITICAL RULE FOR llm_prompt ---
-- **ONLY** generate a prompt if the user explicitly asks for "advice", "recommendations", "explanations", "practices", or "why" or "how", etc..
-- For purely factual queries (what, where, when, how much, total, average, list, compare, find), the `llm_prompt` **MUST** be "N/A".
-
---- CRITICAL RULE FOR UNKNOWN DATA ---
-- If the user asks for something completely unrelated to the schemas or you know this kind of data won't be retrived from our databases, do this:
-    1. Set `"db1_sql"` to "N/A".
-    2. Set `"db2_sql"` to "N/A".
-    3. Copy the **ENTIRE** user query into `"llm_prompt"`.
-
---- OUTPUT FORMAT ---
-You MUST return a single JSON object with these exact keys:
-- `"db1_sql"`: valid MySQL query for DB1, or "N/A" if not needed.
-- `"db2_sql"`: valid MySQL query for DB2, or "N/A" if not needed.
-- `"llm_prompt"`: The part of the user's query that CANNOT be answered by the databases (e.g., requests for advice, explanations, or general knowledge).
+**NEVER** hallucinate columns. If a specific data point (e.g. "population", "price", "profit", "subsidy", "disease") is not in the schema, move that part of the request to `llm_prompt`.
 """
 
-    # decomposes user query and gets the execution plan
     def decompose(self, user_query: str):
         response = None
         print(f"\nAnalyzing query with Gemini (with Ontology): '{user_query}'")
@@ -294,66 +228,45 @@ You MUST return a single JSON object with these exact keys:
         except Exception as e:
             print(f"An error occurred while communicating with the Gemini API: {e}")
             try:
-                # Retry:
+                # Retry
                 if not response:
                     response = self.model.generate_content([user_query])
-
                 response_text = response.text
-
                 try:
                     decomposed_plan = json.loads(response_text)
                     return decomposed_plan
                 except json.JSONDecodeError as inner_e:
-                    print(
-                        f"CRITICAL: Failed to parse LLM response: {inner_e}. Response text: {response_text}"
-                    )
+                    print(f"CRITICAL: Failed to parse LLM response: {inner_e}.")
                     return {
-                        "error": f"CRITICAL: Failed to parse LLM response: {inner_e}. Response text: {response_text}"
+                        "error": f"CRITICAL: Failed to parse LLM response: {inner_e}"
                     }
             except Exception as e:
                 print(f"An error occurred while communicating with the Gemini API: {e}")
+                return {"error": f"An error occurred: {str(e)}."}
 
-                if "response_text" in locals() and response_text:
-                    return {
-                        "error": f"An error occurred: {str(e)}. Response text: {response_text}"
-                    }
-                else:
-                    return {
-                        "error": f"An error occurred: {str(e)}. No response text captured."
-                    }
-
-    # If somehow, it generates Wrong SQL Queries, it tries to fix it by re-calling the LLM along with the error
     def fix_query(
         self, original_query: str, bad_sql: str, error_msg: str, db_type: str
     ):
         print(f"\n🔧 SELF-CORRECTION: Attempting to fix SQL for {db_type}...")
-
         target_schema = self.db1_schema if "DB1" in db_type else self.db2_schema
-
         fix_prompt = f"""
         You act as a SQL Debugger.
-
         **CONTEXT:**
         User Query: "{original_query}"
         Target Database Schema: 
         {target_schema}
-
         **THE BUG:**
         You generated this SQL:
         {bad_sql}
-
         It failed with this MySQL Error:
         "{error_msg}"
-
         **TASK:**
-        1. Analyze the error (e.g., column doesn't exist, syntax error, wrong table).
+        1. Analyze the error.
         2. Correct the SQL to be valid for the provided schema.
         3. Return ONLY the corrected SQL string in a JSON format.
-
         **OUTPUT FORMAT:**
         {{ "fixed_sql": "SELECT ... " }}
         """
-
         try:
             response = self.model.generate_content(fix_prompt)
             data = json.loads(response.text)

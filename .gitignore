@@ -1,13 +1,10 @@
-# Python virtual environment
+# Python virtual environment files
 venv/
 __pycache__/
 
-# Role-specific server files
-
-# Ignore raw data files. The database is the source of truth, not the CSVs.
+# DATA files
 data/
 
-./data_extractor.py
 
-# Ignore secrets
+# Secrets
 .env

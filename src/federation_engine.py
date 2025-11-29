@@ -39,22 +39,23 @@ class FederationEngine:
             return None, str(e)
 
     def _execute_with_retry(self, config, query, db_label, user_query, decomposer):
+        """
+        Wrapper around _execute_query that implements the Reflexion (Self-Correction) loop.
+        """
         df, error = self._execute_query(config, query, db_label, attempt=1)
 
         if error and decomposer:
-            print(f"Error in {db_label}: {error}")
-            print("Initiating SQL-Correction...")
-
+            print(f"⚠️ Encountered Error in {db_label}: {error}")
+            print("🔄 Initiating Self-Correction Loop (Reflexion)...")
             fixed_sql = decomposer.fix_query(user_query, query, error, db_label)
 
             if fixed_sql:
-                print(f"Retrying {db_label} with Fixed SQL: {fixed_sql}")
+                print(f"🚀 Retrying {db_label} with Fixed SQL: {fixed_sql}")
                 df_retry, error_retry = self._execute_query(
                     config, fixed_sql, db_label, attempt=2
                 )
-
                 if not error_retry:
-                    print(f"Self-Correction Successful for {db_label}!")
+                    print(f"✅ Self-Correction Successful for {db_label}!")
                     return df_retry, None
                 else:
                     return None, f"Retry failed: {error_retry}"
@@ -63,10 +64,8 @@ class FederationEngine:
 
         return df, error
 
-    # Perform predictions based on ground data
     def simulate_scenario(self, district, crop, condition):
         print(f"🔮 Running Simulation: {district}, {crop} -> {condition}")
-
         # 1. Fetch Yield History (DB2)
         sql_yields = f"""
             SELECT h.year, h.yield_ton_per_hectare, h.production_tonnes
@@ -82,7 +81,8 @@ class FederationEngine:
             if yields_df is not None and not yields_df.empty
             else "No Data"
         )
-        # We aggregate monthly data to yearly to match the yield
+
+        # 2. Fetch Weather History (DB1)
         sql_weather = f"""
             SELECT w.year, SUM(w.avg_rainfall_mm) as total_annual_rainfall, AVG(w.avg_temp_celsius) as avg_temp
             FROM weather_data w
@@ -100,147 +100,83 @@ class FederationEngine:
             else "No Data"
         )
 
-        # 3. Build Grounded Prompt
         sim_prompt = f"""
         You are an Agricultural AI Simulator.
-        
         CONTEXT: District: {district}, Crop: {crop}
-        
         --- GROUND TRUTH DATA ---
-        1. Historical Yields (DB2):
-        {yields_json}
-        
-        2. Historical Weather (DB1):
-        {weather_json}
-        
+        1. Historical Yields (DB2): {yields_json}
+        2. Historical Weather (DB1): {weather_json}
         --- SIMULATION ---
         SCENARIO: "What happens if {condition}?"
-        
-        TASK: 
-        1. Analyze the correlation between past weather (DB1) and past yields (DB2).
-        2. Apply the scenario condition to this baseline.
-        3. Predict impact on Yield and Production with quantitative estimates.
+        TASK: Predict impact on Yield/Production based on correlation with past data.
         """
-
         try:
             return self.model.generate_content(sim_prompt).text
         except Exception as e:
             return f"Simulation Failed: {e}"
 
-    def _get_llm_data(self, prompt):
+    def _get_llm_data(self, prompt, db_context=""):
+        """
+        Fetches research/context from LLM.
+        NOW ACCEPTS 'db_context' to solve the 'Population of THIS district' problem.
+        """
         if not prompt or prompt == "N/A":
             return "N/A", None
 
-        prompt = f"""You are an Expert Agricultural Knowledge and Research Engine.
+        context_block = ""
+        if db_context:
+            context_block = f"\n\n--- CONTEXT FOUND IN DATABASES ---\n{db_context}\n----------------------------------\n"
+
+        final_prompt = f"""You are an Expert Agricultural and General Knowledge Engine.
 
 User Request: "{prompt}"
-
-Produce an output that is suitable for downstream summarization with other structured datasets. 
-The response must be factual, structured, and maximally useful for machine-processing.
-
-Your objectives:
-1. **Interpretation & Scope**
-   - Identify what the user is fundamentally asking (advice, explanation, diagnosis, comparison, definition, procedure, evaluation, or data lookup).
-   - Respond according to the request type without adding conversational phrasing.
-
-2. **Core Content**
-   - Provide accurate, domain-relevant knowledge.
-   - When applicable, include quantitative ranges, scientific names, agronomic thresholds, environmental factors, or standard benchmarks used in agricultural R&D.
-   - For non-agricultural queries, summarize the core technical or conceptual content precisely.
-
-3. **Optional Direct Advice (Only if Requested)**
-   - If the user explicitly seeks recommendations, include clear steps or guidelines.
-   - Keep advice evidence-based.
-
-4. **Evidence, References, and Standards**
-   - Attribute information to known authorities when possible (e.g., [Source: ICAR], [Source: FAO], [Source: State Agriculture Dept.], [Source: Peer-Reviewed Literature]).
-   - If specific sourcing is unknown, label it as [Source: General Agronomic Consensus].
-
-5. **External Resources**
-   - Suggest authoritative portals, government sites, data repositories, or document types the user may consult (e.g., mKisan, Vikaspedia, FAOSTAT, ICAR publications).
-
-6. **Structure**
-   - Use headings, bullet points, and clearly separated sections.
-   - No conversational fillers, no greetings, no emotional tone.
-
-Output must be self-contained and directly usable as unstructured research text for further summarization with factual structured data
+{context_block}
+**INSTRUCTION:**
+1. If the User Request refers to "this district", "these crops", or "the location", USE the information in the 'CONTEXT FOUND IN DATABASES' section above to resolve it.
+2. If the user asks for Population, Demographics, or Prices, use your internal knowledge to answer for the specific entities found in the context.
+3. Provide an output suitable for summarization.
 """
 
         try:
-            response = self.model.generate_content(prompt)
+            response = self.model.generate_content(final_prompt)
             return response.text, None
         except Exception as e:
             print(f"LLM Error (Data): {e}")
             return None, f"Error getting LLM data: {e}"
 
-    # Get Summary
+    def _extract_context_string(self, df, label):
+        """Helper to extract meaningful entities (District, State, Crop) from a DataFrame."""
+        if df is None or df.empty:
+            return ""
+
+        context_parts = []
+        # Case insensitive column lookup
+        cols = [c.lower() for c in df.columns]
+
+        # Check for District
+        if "district" in cols:
+            districts = df.iloc[:, cols.index("district")].unique()
+            context_parts.append(f"Districts: {', '.join(map(str, districts))}")
+
+        # Check for State
+        if "state" in cols:
+            states = df.iloc[:, cols.index("state")].unique()
+            context_parts.append(f"States: {', '.join(map(str, states))}")
+
+        # Check for Crop
+        if "crop_name" in cols:
+            crops = df.iloc[:, cols.index("crop_name")].unique()
+            context_parts.append(f"Crops: {', '.join(map(str, crops))}")
+
+        if context_parts:
+            return f"[{label}] -> " + " | ".join(context_parts)
+        return ""
+
     def _synthesize_final_report(self, user_query, joined_df, db1_df, db2_df, llm_data):
         structured_json = "N/A"
-        synthesis_prompt = ""
-
         if joined_df is not None and not joined_df.empty:
             structured_json = joined_df.to_json(orient="records")
-
-            synthesis_prompt = f"""You are an Expert Agricultural Synthesis Engine.
-
-Original User Query: "{user_query}"
-
-Integrated Structured Data (STRUCTURED DATA):
-{structured_json}
-
-Unstructured Research Output from Previous LLM Step(UNSTRUCTURED DATA):
-{llm_data}
-
----
-
-Task:
-Produce a single, coherent synthesis that combines all available information.
-The output must be analytical, concise, and directly address the user's query without any conversational language or preambles.
-
-Mandatory Requirements:
-
-1. **Query-First Structure**
-   - Begin by resolving the user's query as precisely as possible.
-   - If the question requests recommendations, provide them.
-   - If the question requests explanation, comparison, diagnosis, or contextual knowledge, focus on that.
-   - Avoid greetings, acknowledgments, or meta-comments.
-
-2. **Use of Structured Data**
-   - Integrate relevant facts from the STRUCTURED DATA into the explanation.
-   - Do not merely restate the JSON.
-   - If the structured data is "N/A" or contains no relevant entries, state this briefly and continue the synthesis without halting.
-
-3. **Use of Unstructured Data**
-   - Draw supporting context, agronomic ranges, thresholds, scientific names, and any referenced authorities from the UNSTRUCTURED DATA (the llm research output)
-   - Merge these seamlessly with the structured facts.
-
-4. **Fusion, Not Enumeration**
-   - Present the final result as a unified narrative or analysis.
-   - No bullet dumping of JSON values.
-   - Highlight links between datasets when meaningful (e.g., "The structured dataset indicates X, which aligns with Y from the unstructured analysis").
-
-5. **Neutral, Technical Tone**
-   - No greetings, no conversational phrases, no role self-identification.
-   - Use clear subheadings only if they improve clarity.
-   - Avoid statements about what the system “can” or “will” do.
-
-6. **Missing or Conflicting Information**
-   - If data sources disagree, provide a short reconciliation or state the uncertainty.
-   - If necessary information is absent, state the gap briefly and provide the best-possible interpretation based on available evidence.
-   
-**CRITICAL INSTRUCTION FOR MISSING DATA:**
-    - If DB1 and DB2 data is "N/A", **YOU MUST** rely entirely on the LLM Research output to answer the user's question.
-    - Do not say "I cannot answer". Use the provided research text.
-    - If the user asked a query that cannot be handled by DBs, that the database couldn't answer, answer it using your general knowledge capabilities found in the LLM Research section.
-
-Output must be a single, cohesive, self-contained synthesis that integrates all available evidence. can be used downstream in summarization or decision-support models. It should be easy to understand and can be applied right away.
-
-"""
-
         else:
-            print(
-                "ℹ️ Manual join failed or was not applicable. Synthesizing using SEPARATE data."
-            )
             db1_json = (
                 db1_df.to_json(orient="records")
                 if db1_df is not None and not db1_df.empty
@@ -251,83 +187,38 @@ Output must be a single, cohesive, self-contained synthesis that integrates all 
                 if db2_df is not None and not db2_df.empty
                 else "N/A"
             )
+            structured_json = f"DB1: {db1_json}\nDB2: {db2_json}"
 
-            synthesis_prompt = f"""You are an Expert Agricultural Synthesis Engine.
-
+        synthesis_prompt = f"""You are an Expert Synthesis Engine.
 Original User Query: "{user_query}"
 
-The system could not perform a direct join. You now have the following SEPARATE DATA SOURCES:
+Integrated Structured Data (From Database):
+{structured_json}
 
-DB1: Weather/Soil Information
-{db1_json}
-
-DB2: Crop/Variety/Yield Information
-{db2_json}
-
-Unstructured Research Output (General Context/Guidelines)
+Unstructured Research Output (Contextualized):
 {llm_data}
 
 ---
-
-Task:
-Produce a single, coherent synthesis that addresses the user’s query by integrating the un-joined data sources and the unstructured research output.
-
-Requirements:
-
-1. Query Resolution
-   - Begin by directly addressing the user’s query.
-   - Identify whether the query requires explanation, comparison, diagnosis, suitability analysis, or recommendations.
-   - Respond in a factual, neutral, and technical tone without conversational language.
-
-2. Cross-Source Integration
-   - Compare and correlate DB1 and DB2 manually where relevant (e.g., match soil type to crop suitability, climate to expected performance, rainfall to risk factors).
-   - If correlations are weak or incomplete, state the limitations briefly and continue the synthesis.
-
-3. Use of Unstructured Research Output
-   - Integrate evidence-based context, thresholds, ranges, agronomic standards, or scientific names extracted from the unstructured text.
-   - Use it only where it strengthens or clarifies the final synthesis.
-
-4. No Enumeration or Dumping
-   - Do not list raw JSON or reproduce data verbatim.
-   - Transform the content into a unified analysis that links conditions, constraints, and implications.
-
-5. Data Gaps and Uncertainty
-   - If information is missing, incomplete, or contradictory across sources, note this succinctly and provide the best possible interpretation without speculation.
-
-6. Tone and Structure
-   - No greetings, no conversational filler, no role identification.
-   - Clear, concise, structured explanation suitable for downstream summarization.
-   - Subheadings allowed only if they improve clarity.
-   
-**CRITICAL INSTRUCTION FOR MISSING DATA:**
-    - If DB1 and DB2 data is "N/A", **YOU MUST** rely entirely on the LLM Research output to answer the user's question.
-    - Do not say "I cannot answer". Use the provided research text.
-    - If the user asked a query that cannot be handled by DBs, that the database couldn't answer, answer it using your general knowledge capabilities found in the LLM Research section.
-
-Provide one cohesive, internally consistent synthesis that integrates all available evidence.
-
+CRITICAL INSTRUCTION:
+1. **Merge** the Structured Data (Numbers) with the Research Output (Facts/Context).
+2. If the Research Output contains the population/demographics requested, include it prominently.
+3. Produce a cohesive final answer.
 """
-
         try:
+            # We can rely on internal knowledge here too as a backup
             response = self.synthesis_model.generate_content(synthesis_prompt)
             return response.text
         except Exception as e:
-            print(f"LLM Error (Synthesis): {e}")
             return f"Error during final synthesis: {e}"
 
-    # Run the whole system - from getting decomposed queries TO federating them across DBs, collecting DATA
     def run(self, decomposed_plan: dict, user_query: str, decomposer=None):
-        """
-        Orchestrates the federation.
-        Now accepts 'decomposer' to enable self-correction.
-        """
         db1_sql = decomposed_plan.get("db1_sql")
         db2_sql = decomposed_plan.get("db2_sql")
         llm_prompt = decomposed_plan.get("llm_prompt")
 
         errors = []
 
-        # Execute DB Queries
+        # 1. Execute DB Queries (STEP 1: GET DATA)
         db1_res, db1_err = self._execute_with_retry(
             self.db1_config, db1_sql, "DB1 (Local)", user_query, decomposer
         )
@@ -340,7 +231,7 @@ Provide one cohesive, internally consistent synthesis that integrates all availa
         if db2_err:
             errors.append(db2_err)
 
-        # join on ALL columns with same name.
+        # 2. Join (STEP 2: MERGE DATA)
         joined_df = pd.DataFrame()
         try:
             if (
@@ -349,15 +240,12 @@ Provide one cohesive, internally consistent synthesis that integrates all availa
                 and db2_res is not None
                 and not db2_res.empty
             ):
-                # Normalize columns to lowercase to ensure matching works
+                # Standardize cols
                 db1_res.columns = [c.lower() for c in db1_res.columns]
                 db2_res.columns = [c.lower() for c in db2_res.columns]
 
-                # Get Common Columns
                 common_cols = list(set(db1_res.columns) & set(db2_res.columns))
-
                 if common_cols:
-                    print(f"🔗 Strategy: Natural Join on columns: {common_cols}")
                     joined_df = pd.merge(
                         db1_res,
                         db2_res,
@@ -366,20 +254,27 @@ Provide one cohesive, internally consistent synthesis that integrates all availa
                         suffixes=("_db1", "_db2"),
                     )
                 else:
-                    errors.append(
-                        "Join Failed: No common columns found for Join. (Cross Product prevented)"
-                    )
-
+                    errors.append("Join Failed: No common columns.")
             elif db1_res is not None and not db1_res.empty:
                 joined_df = db1_res
             elif db2_res is not None and not db2_res.empty:
                 joined_df = db2_res
-
         except Exception as e:
             errors.append(f"Join Processing Failed: {e}")
 
-        # Get LLM Advice & Summarize
-        llm_data, llm_err = self._get_llm_data(llm_prompt)
+        # 3. Context Construction (NEW STEP: PREPARE CONTEXT)
+        db_context_str = ""
+        if not joined_df.empty:
+            db_context_str += self._extract_context_string(joined_df, "Joined Results")
+        else:
+            if db1_res is not None:
+                db_context_str += self._extract_context_string(db1_res, "DB1") + "\n"
+            if db2_res is not None:
+                db_context_str += self._extract_context_string(db2_res, "DB2") + "\n"
+
+        # 4. Get LLM Advice (STEP 3: GET LLM DATA WITH CONTEXT)
+        # Now we pass the 'db_context_str' so the LLM knows what "this district" means!
+        llm_data, llm_err = self._get_llm_data(llm_prompt, db_context=db_context_str)
         if llm_err:
             errors.append(llm_err)
 
